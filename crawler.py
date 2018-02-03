@@ -6,9 +6,6 @@ import asyncio
 from collections import deque
 import uvloop
 import requests
-
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-
 import math
 import base64
 import os
@@ -20,6 +17,8 @@ import logging
 import locale
 import certlib
 
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
 try:
     locale.setlocale(locale.LC_ALL, 'en_US.utf8')
 except:
@@ -30,6 +29,73 @@ from OpenSSL import crypto
 
 DOWNLOAD_CONCURRENCY = 50
 MAX_QUEUE_SIZE = 200
+
+
+
+async def mass_worker(parse_results_queue):
+
+    pool = await aioprocessing.AioPool()
+    await pool.coro_map(mass, parse_results_queue)
+
+
+def mass(parse_results_queue):
+    anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
+                                                                  verbose_name='crawl',
+                                                                  tag_filter_exp='sample-type:domainsample',
+                                                                  )
+    entries = parse_results_queue.get()
+    print(len(entries))
+    pass
+    for entry in entries:
+        for i in range(1, 4):
+            try:
+                s = Sample.create(domain=entry['all_domains'][0])
+                scheduled = anal_system_instance.schedule_analysis(s)
+                scheduled.create_report(
+                    json_report_objects={'domain_report': ('domain_report', entry)},
+                )
+                break
+            except requests.HTTPError:
+                print('HTTPError while creating a sample. Attempt {} of 3'.format(i))
+                if i == 3:
+                    print('Skipping...')
+
+
+
+
+
+"""async def mass_worker(parse_results_queue):
+    process_pool = aioprocessing.AioPool()
+
+    while True:
+        print('klsdjflksdjflkdsf')
+        entries = await parse_results_queue.get()
+        if entries is not None:
+            await process_pool.coro_map(mass, entries)
+        else:
+            break
+    process_pool.close()
+
+
+def mass(entries):
+    anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
+                                                                  verbose_name='crawl',
+                                                                  tag_filter_exp='sample-type:domainsample',
+                                                                  )
+    print(len(entries))
+    for entry in entries:
+        for i in range(1, 4):
+            try:
+                s = Sample.create(domain=entry['all_domains'][0])
+                scheduled = anal_system_instance.schedule_analysis(s)
+                scheduled.create_report(
+                    json_report_objects={'domain_report': ('domain_report', entry)},
+                )
+                break
+            except requests.HTTPError:
+                print('HTTPError while creating a sample. Attempt {} of 3'.format(i))
+                if i == 3:
+                    print('Skipping...')"""
 
 
 async def download_worker(session, log_info, work_deque, download_queue):
@@ -90,6 +156,7 @@ async def retrieve_certificates(loop, url=None, ctl_offset=0, output_directory='
                 continue
             work_deque = deque()
             download_results_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+            parse_results_queue = asyncio.Queue(maxsize=3)
 
             logging.info("Downloading certificates for {}".format(log['description']))
             try:
@@ -109,15 +176,27 @@ async def retrieve_certificates(loop, url=None, ctl_offset=0, output_directory='
                 for _ in range(concurrency_count)
             ])
             processing_task = asyncio.ensure_future(
-                processing_coro(download_results_queue, output_dir=output_directory))
+                processing_coro(download_results_queue, parse_results_queue))
             queue_monitor_task = asyncio.ensure_future(queue_monitor(log_info, work_deque, download_results_queue))
             asyncio.ensure_future(download_tasks)
+            ###
+            mass_task = asyncio.ensure_future(
+                mass_worker(parse_results_queue))
+            ###
+
+
+
 
             await download_tasks
 
             await download_results_queue.put(None)  # Downloads are done, processing can stop
 
             await processing_task
+
+            for _ in range(0, 8):
+                await parse_results_queue.put(None)
+
+            await mass_task
 
             queue_monitor_task.cancel()
 
@@ -129,9 +208,9 @@ async def retrieve_certificates(loop, url=None, ctl_offset=0, output_directory='
             logging.info("Finished downloading and processing {}".format(log_info['url']))
 
 
-async def processing_coro(download_results_queue, output_dir="/tmp"):
+async def processing_coro(download_results_queue, parse_result_queue):
     logging.info("Starting processing coro and process pool")
-    process_pool = aioprocessing.AioPool(initargs=(output_dir,))
+    process_pool = aioprocessing.AioPool()
 
     done = False
 
@@ -147,42 +226,25 @@ async def processing_coro(download_results_queue, output_dir="/tmp"):
                 break
 
         logging.debug("Got a chunk of {}. Mapping into process pool".format(process_pool.pool_workers))
-
-        """for entry in entries_iter:
-            csv_storage = '{}/certificates/{}'.format(output_dir, entry['log_info']['url'].replace('/', '_'))
-            if not os.path.exists(csv_storage):
-                print("[{}] Making dir...".format(os.getpid()))
-                os.makedirs(csv_storage)"""
-
         if len(entries_iter) > 0:
-            await process_pool.coro_map(process_worker, entries_iter)
+            results = await process_pool.coro_map(process_worker, entries_iter)
+            await parse_result_queue.put(results)
 
         logging.debug("Done mapping! Got results")
 
         if done:
             break
 
-    process_pool.close()
-
     await process_pool.coro_join()
 
 
-def process_worker(result_info, output_dir="/tmp"):
-    anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
-                                                                  verbose_name='crawl',
-                                                                  tag_filter_exp='sample-type:domainsample',
-                                                                  )
+def process_worker(result_info):
+    parsed_results = []
 
     logging.debug("Worker {} starting...".format(os.getpid()))
     if not result_info:
         return
     try:
-        # csv_storage = '{}/certificates/{}'.format(output_dir, result_info['log_info']['url'].replace('/', '_'))
-
-        # csv_file = "{}/{}-{}.csv".format(csv_storage, result_info['start'], result_info['end'])
-
-        # lines = []
-
         print("[{}] Parsing...".format(os.getpid()))
         for entry in result_info['entries']:
             mtl = certlib.MerkleTreeHeader.parse(base64.b64decode(entry['leaf_input']))
@@ -218,8 +280,12 @@ def process_worker(result_info, output_dir="/tmp"):
             chain_hash = hashlib.sha256("".join([x['as_der'] for x in cert_data['chain']]).encode('ascii')).hexdigest()
 
             # header = "url, cert_index, chain_hash, cert_der, all_domains, not_before, not_after"
+            parsed_results.append({'url': result_info['log_info']['url'],
+                                   'all_domains': cert_data['leaf_cert']['all_domains'],
+                                   'not_before': str(cert_data['leaf_cert']['not_before']),
+                                   'not_after': str(cert_data['leaf_cert']['not_after'])})
 
-            submit_to_mass(cert_data, entry, result_info, chain_hash, anal_system_instance)
+            # submit_to_mass(cert_data, entry, result_info, chain_hash, anal_system_instance)
 
     except Exception as e:
         print("========= EXCEPTION =========")
@@ -227,16 +293,15 @@ def process_worker(result_info, output_dir="/tmp"):
         print(e)
         print("=============================")
 
-    return True
+    return parsed_results
 
 
 def submit_to_mass(cert_data, entry, result_info, chain_hash, anal_system_instance):
-        domain_report = {'all_domains': cert_data['leaf_cert']['all_domains'],
-                         'chain_hash': chain_hash,
-                         'cert_index': str(entry['cert_index']),
-                         'log_address': result_info['log_info']['url'],
+    for domain in cert_data['leaf_cert']['all_domains']:
+        domain_report = {'log_address': result_info['log_info']['url'],
                          'not_before': str(cert_data['leaf_cert']['not_before']),
                          'not_after': str(cert_data['leaf_cert']['not_after'])}
+        print(domain_report)
 
         for i in range(1, 4):
             try:
@@ -271,6 +336,7 @@ async def get_certs_and_print():
 
 def main():
     mac.ConnectionManager().register_connection('default',
+
                                                 'IjVhNzI3ZGMxNjEzYmM2MWE5ODgyMjMyYSI.P7hZaTZvbp-_0kEmRd02LTKGonc',
                                                 'http://localhost:5000/api')
 
