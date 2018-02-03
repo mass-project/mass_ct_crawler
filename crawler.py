@@ -15,6 +15,7 @@ import aiohttp
 import aioprocessing
 import logging
 import locale
+import time
 import certlib
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
@@ -29,23 +30,29 @@ from OpenSSL import crypto
 
 DOWNLOAD_CONCURRENCY = 50
 MAX_QUEUE_SIZE = 200
+MASS_CONCURRENCY = 8
 
 
 
 async def mass_worker(parse_results_queue):
+    manager = aioprocessing.AioManager()
+    process_pool = aioprocessing.AioPool()
+    print('pre')
+    await process_pool.map_async(mass, [parse_results_queue for _ in range(MASS_CONCURRENCY)])
 
-    pool = await aioprocessing.AioPool()
-    await pool.coro_map(mass, parse_results_queue)
 
 
-def mass(parse_results_queue):
-    anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
+def mass(entries):
+    print('y')
+    if entries.get():
+        print('x')
+    while True:
+        pass
+    """anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
                                                                   verbose_name='crawl',
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
-    entries = parse_results_queue.get()
     print(len(entries))
-    pass
     for entry in entries:
         for i in range(1, 4):
             try:
@@ -58,7 +65,7 @@ def mass(parse_results_queue):
             except requests.HTTPError:
                 print('HTTPError while creating a sample. Attempt {} of 3'.format(i))
                 if i == 3:
-                    print('Skipping...')
+                    print('Skipping...')"""
 
 
 
@@ -78,6 +85,7 @@ def mass(parse_results_queue):
 
 
 def mass(entries):
+    print('blab')
     anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
                                                                   verbose_name='crawl',
                                                                   tag_filter_exp='sample-type:domainsample',
@@ -156,7 +164,9 @@ async def retrieve_certificates(loop, url=None, ctl_offset=0, output_directory='
                 continue
             work_deque = deque()
             download_results_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
-            parse_results_queue = asyncio.Queue(maxsize=3)
+            #parse_results_queue = aioprocessing.Queue(maxsize=3)
+            manager = aioprocessing.AioManager()
+            parse_results_queue = manager.Queue(maxsize=MAX_QUEUE_SIZE)
 
             logging.info("Downloading certificates for {}".format(log['description']))
             try:
@@ -194,7 +204,7 @@ async def retrieve_certificates(loop, url=None, ctl_offset=0, output_directory='
             await processing_task
 
             for _ in range(0, 8):
-                await parse_results_queue.put(None)
+                parse_results_queue.put(None)
 
             await mass_task
 
@@ -228,7 +238,7 @@ async def processing_coro(download_results_queue, parse_result_queue):
         logging.debug("Got a chunk of {}. Mapping into process pool".format(process_pool.pool_workers))
         if len(entries_iter) > 0:
             results = await process_pool.coro_map(process_worker, entries_iter)
-            await parse_result_queue.put(results)
+            parse_result_queue.put(results)
 
         logging.debug("Done mapping! Got results")
 
