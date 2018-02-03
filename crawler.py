@@ -4,7 +4,6 @@ from mass_api_client.utils import get_or_create_analysis_system_instance
 import argparse
 import asyncio
 from collections import deque
-import uvloop
 import requests
 import math
 import base64
@@ -15,10 +14,7 @@ import aiohttp
 import aioprocessing
 import logging
 import locale
-import time
 import certlib
-
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
 try:
     locale.setlocale(locale.LC_ALL, 'en_US.utf8')
@@ -29,81 +25,38 @@ except:
 from OpenSSL import crypto
 
 DOWNLOAD_CONCURRENCY = 50
-MAX_QUEUE_SIZE = 200
+MAX_QUEUE_SIZE = 24
+MASS_QUEUE_SIZE = 24
 MASS_CONCURRENCY = 8
 
 
-
 async def mass_worker(parse_results_queue):
-    manager = aioprocessing.AioManager()
     process_pool = aioprocessing.AioPool()
-    print('pre')
-    await process_pool.map_async(mass, [parse_results_queue for _ in range(MASS_CONCURRENCY)])
+    process_pool.map_async(mass, [parse_results_queue for _ in range(MASS_CONCURRENCY)])
 
 
-
-def mass(entries):
-    print('y')
-    if entries.get():
-        print('x')
-    while True:
-        pass
-    """anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
-                                                                  verbose_name='crawl',
-                                                                  tag_filter_exp='sample-type:domainsample',
-                                                                  )
-    print(len(entries))
-    for entry in entries:
-        for i in range(1, 4):
-            try:
-                s = Sample.create(domain=entry['all_domains'][0])
-                scheduled = anal_system_instance.schedule_analysis(s)
-                scheduled.create_report(
-                    json_report_objects={'domain_report': ('domain_report', entry)},
-                )
-                break
-            except requests.HTTPError:
-                print('HTTPError while creating a sample. Attempt {} of 3'.format(i))
-                if i == 3:
-                    print('Skipping...')"""
-
-
-
-
-
-"""async def mass_worker(parse_results_queue):
-    process_pool = aioprocessing.AioPool()
-
-    while True:
-        print('klsdjflksdjflkdsf')
-        entries = await parse_results_queue.get()
-        if entries is not None:
-            await process_pool.coro_map(mass, entries)
-        else:
-            break
-    process_pool.close()
-
-
-def mass(entries):
-    print('blab')
+def mass(queue):
     anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
                                                                   verbose_name='crawl',
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
-    print(len(entries))
-    for entry in entries:
-        for i in range(1, 4):
-            try:
-                s = Sample.create(domain=entry['all_domains'][0])
-                scheduled = anal_system_instance.schedule_analysis(s)
-                scheduled.create_report(
-                    json_report_objects={'domain_report': ('domain_report', entry)},
-                )
-                break
-            except requests.HTTPError:
-                print('HTTPError while creating a sample. Attempt {} of 3'.format(i))
-                if i == 3:
-                    print('Skipping...')"""
+    while True:
+        entries = queue.get()
+        if entries is None:
+            break
+        print('Submitting to MASS...')
+        for entry in entries:
+            for i in range(3):
+                try:
+                    s = Sample.create(domain=entry['all_domains'][0])
+                    scheduled = anal_system_instance.schedule_analysis(s)
+                    scheduled.create_report(
+                        json_report_objects={'domain_report': ('domain_report', entry)},
+                    )
+                    break
+                except requests.HTTPError:
+                    if i == 2:
+                        logging.error('HTTPError while creating a sample.')
 
 
 async def download_worker(session, log_info, work_deque, download_queue):
@@ -122,7 +75,8 @@ async def download_worker(session, log_info, work_deque, download_queue):
                     logging.debug("[{}] Retrieved blocks {}-{}...".format(log_info['url'], start, end))
                     break
             except Exception as e:
-                logging.error("Exception getting block {}-{}! {}".format(start, end, e))
+                if x == 2:
+                    logging.error("Exception getting block {}-{}! {}".format(start, end, e))
         else:  # Notorious for else, if we didn't encounter a break our request failed 3 times D:
             with open('/tmp/fails.csv', 'a') as f:
                 f.write(",".join([log_info['url'], str(start), str(end)]))
@@ -166,7 +120,7 @@ async def retrieve_certificates(loop, url=None, ctl_offset=0, output_directory='
             download_results_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
             #parse_results_queue = aioprocessing.Queue(maxsize=3)
             manager = aioprocessing.AioManager()
-            parse_results_queue = manager.Queue(maxsize=MAX_QUEUE_SIZE)
+            parse_results_queue = manager.Queue(maxsize=MASS_QUEUE_SIZE)
 
             logging.info("Downloading certificates for {}".format(log['description']))
             try:
@@ -238,7 +192,8 @@ async def processing_coro(download_results_queue, parse_result_queue):
         logging.debug("Got a chunk of {}. Mapping into process pool".format(process_pool.pool_workers))
         if len(entries_iter) > 0:
             results = await process_pool.coro_map(process_worker, entries_iter)
-            parse_result_queue.put(results)
+            for result in results:
+                parse_result_queue.put(result)
 
         logging.debug("Done mapping! Got results")
 
@@ -304,27 +259,6 @@ def process_worker(result_info):
         print("=============================")
 
     return parsed_results
-
-
-def submit_to_mass(cert_data, entry, result_info, chain_hash, anal_system_instance):
-    for domain in cert_data['leaf_cert']['all_domains']:
-        domain_report = {'log_address': result_info['log_info']['url'],
-                         'not_before': str(cert_data['leaf_cert']['not_before']),
-                         'not_after': str(cert_data['leaf_cert']['not_after'])}
-        print(domain_report)
-
-        for i in range(1, 4):
-            try:
-                s = Sample.create(domain=cert_data['leaf_cert']['all_domains'][0])
-                scheduled = anal_system_instance.schedule_analysis(s)
-                scheduled.create_report(
-                    json_report_objects={'domain_report': ('domain_report', domain_report)},
-                )
-                break
-            except requests.HTTPError:
-                print('HTTPError while creating a sample. Attempt {} of 3'.format(i))
-                if i == 3:
-                    print('Skipping...')
 
 
 async def get_certs_and_print():
