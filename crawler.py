@@ -29,8 +29,7 @@ except:
 from OpenSSL import crypto
 
 DOWNLOAD_CONCURRENCY = 50
-MAX_QUEUE_SIZE = 400
-ANAL_INSTANCE = None
+MAX_QUEUE_SIZE = 200
 
 
 async def download_worker(session, log_info, work_deque, download_queue):
@@ -232,9 +231,8 @@ def process_worker(result_info, output_dir="/tmp"):
 
 
 def submit_to_mass(cert_data, entry, result_info, chain_hash, anal_system_instance):
-    print(os.getpid())
-    for domain in cert_data['leaf_cert']['all_domains']:
-        domain_report = {'as_der': cert_data['leaf_cert']['as_der'], 'chain_hash': chain_hash,
+        domain_report = {'all_domains': cert_data['leaf_cert']['all_domains'],
+                         'chain_hash': chain_hash,
                          'cert_index': str(entry['cert_index']),
                          'log_address': result_info['log_info']['url'],
                          'not_before': str(cert_data['leaf_cert']['not_before']),
@@ -242,7 +240,7 @@ def submit_to_mass(cert_data, entry, result_info, chain_hash, anal_system_instan
 
         for i in range(1, 4):
             try:
-                s = Sample.create(domain=domain)
+                s = Sample.create(domain=cert_data['leaf_cert']['all_domains'][0])
                 scheduled = anal_system_instance.schedule_analysis(s)
                 scheduled.create_report(
                     json_report_objects={'domain_report': ('domain_report', domain_report)},
@@ -273,8 +271,8 @@ async def get_certs_and_print():
 
 def main():
     mac.ConnectionManager().register_connection('default',
-                                                'IjVhNmU2Mzc1NjEzYmM2NmRlYTcwZjhiNSI.fo2UuNOCl3web832ZkcLObz8zg4',
-                                                'http://localhost:8000/api')
+                                                'IjVhNzI3ZGMxNjEzYmM2MWE5ODgyMjMyYSI.P7hZaTZvbp-_0kEmRd02LTKGonc',
+                                                'http://localhost:5000/api')
 
     loop = asyncio.get_event_loop()
 
