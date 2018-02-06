@@ -26,12 +26,13 @@ except locale.Error:
 
 DOWNLOAD_QUEUE_SIZE = 24
 MASS_QUEUE_SIZE = 24
-barrier = None
 
 
 async def mass_worker(parse_results_queue, mass_concurrency):
     process_pool = aioprocessing.AioPool()
-    process_pool.map_async(mass, [parse_results_queue for _ in range(mass_concurrency)])
+    await process_pool.coro_map(mass, [parse_results_queue for _ in range(mass_concurrency)])
+    process_pool.close()
+    await process_pool.coro_join()
 
 
 def mass(queue):
@@ -40,13 +41,8 @@ def mass(queue):
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
     while True:
-        print('start')
         entries = queue.get()
-        print('got')
         if entries is None:
-            print('is nonte')
-            barrier.wait()
-            print('end')
             break
         print('[{}] Submitting {} Samples to MASS...'.format(os.getpid(), len(entries)))
         for entry in entries:
@@ -93,7 +89,6 @@ async def download_worker(session, log_info, work_deque, download_queue, timesta
 
 
 async def retrieve_certificates(loop, urls, download_concurrency, mass_concurrency, timestamp=0):
-    barrier = aioprocessing.AioBarrier(mass_concurrency + 1)
     async with aiohttp.ClientSession(loop=loop, conn_timeout=10) as session:
         ctl_logs = await certlib.retrieve_all_ctls(session)
         for log in ctl_logs:
@@ -124,17 +119,16 @@ async def retrieve_certificates(loop, urls, download_concurrency, mass_concurren
             processing_task = asyncio.ensure_future(processing_coro(download_results_queue, parse_results_queue))
             asyncio.ensure_future(download_tasks)
 
-            asyncio.ensure_future(mass_worker(parse_results_queue, mass_concurrency))
+            mass_task = asyncio.ensure_future(mass_worker(parse_results_queue, mass_concurrency))
 
             await download_tasks
             await download_results_queue.put(None)  # Downloads are done, processing can stop
             await processing_task
             for _ in range(0, mass_concurrency):
-                print('put')
                 parse_results_queue.put(None)
                 print('putted')
             print('Parsing complete. MASS Queue: {}'.format(parse_results_queue.qsize() - mass_concurrency))
-            barrier.wait()
+            await mass_task
 
             logging.info('Completed.')
 
@@ -160,6 +154,7 @@ async def processing_coro(download_results_queue, parse_result_queue):
             results = await process_pool.coro_map(process_worker, entries_iter)
             for result in results:
                 if len(result) > 0:
+                    print('KDFJLSKJFKLDSJFLKSJDLFJLSDSDF')
                     parse_result_queue.put(result)
 
         if done:
