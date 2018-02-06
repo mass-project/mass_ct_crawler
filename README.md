@@ -5,7 +5,7 @@ Utility for crawling certificate transparency servers and submitting CT informat
 
 Name | Cert Count | Max Block Size | URL
 -----|-----|------------|-----------------
-Google 'Aviator' log | 46466471 | 1024 | ct.googleapis.com/aviator | 
+Google 'Aviator' log | 46466471 | 1024 | ct.googleapis.com/aviator 
 Google 'Icarus' log | 186657087 | 1024 | ct.googleapis.com/icarus
 Google 'Pilot' log | 206952402 | 1024 | ct.googleapis.com/pilot
 Google 'Rocketeer' log | 201088116 | 1024 | ct.googleapis.com/rocketeer

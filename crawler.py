@@ -1,36 +1,37 @@
-import mass_api_client as mac
-from mass_api_client.resources import *
-from mass_api_client.utils import get_or_create_analysis_system_instance
 import argparse
 import asyncio
-from collections import deque
-import requests
 import base64
+import configparser
+import locale
+import logging
 import os
 import traceback
+from collections import deque
+
 import aiohttp
 import aioprocessing
-import logging
-import locale
+import mass_api_client as mac
+import requests
+from OpenSSL import crypto
+from mass_api_client.resources import *
+from mass_api_client.utils import get_or_create_analysis_system_instance
+
 import certlib
 
 try:
     locale.setlocale(locale.LC_ALL, 'en_US.utf8')
-except:
+except locale.Error:
     print('LOCALE FAIL')
     pass
 
-from OpenSSL import crypto
-
-DOWNLOAD_CONCURRENCY = 50
-MAX_QUEUE_SIZE = 24
+DOWNLOAD_QUEUE_SIZE = 24
 MASS_QUEUE_SIZE = 24
-MASS_CONCURRENCY = 8
+barrier = None
 
 
-async def mass_worker(parse_results_queue):
+async def mass_worker(parse_results_queue, mass_concurrency):
     process_pool = aioprocessing.AioPool()
-    process_pool.map_async(mass, [parse_results_queue for _ in range(MASS_CONCURRENCY)])
+    process_pool.map_async(mass, [parse_results_queue for _ in range(mass_concurrency)])
 
 
 def mass(queue):
@@ -39,10 +40,15 @@ def mass(queue):
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
     while True:
+        print('start')
         entries = queue.get()
+        print('got')
         if entries is None:
+            print('is nonte')
+            barrier.wait()
+            print('end')
             break
-        print('[{}] Submitting to MASS...'.format(os.getpid()))
+        print('[{}] Submitting {} Samples to MASS...'.format(os.getpid(), len(entries)))
         for entry in entries:
             for i in range(3):
                 try:
@@ -64,13 +70,13 @@ async def download_worker(session, log_info, work_deque, download_queue, timesta
         except IndexError:
             return
 
-        for x in range(3):
+        for x in range(5):
             try:
                 async with session.get(certlib.DOWNLOAD.format(log_info['url'], start, end)) as response:
                     entry_list = await response.json()
                     break
             except Exception as e:
-                if x == 2:
+                if x == 4:
                     logging.error("Exception getting block {}-{}! {}".format(start, end, e))
         else:  # Notorious for else, if we didn't encounter a break our request failed 3 times D:
             with open('/tmp/fails.csv', 'a') as f:
@@ -79,26 +85,22 @@ async def download_worker(session, log_info, work_deque, download_queue, timesta
 
         for index, entry in zip(range(start, end + 1), entry_list['entries']):
             entry['cert_index'] = index
-        await download_queue.put(({
-            "entries": entry_list['entries'],
-            "log_info": log_info,
-            "start": start,
-            "end": end
-        }, timestamp))
+        await download_queue.put(({"entries": entry_list['entries'],
+                                   "log_info": log_info,
+                                   "start": start,
+                                   "end": end
+                                   }, timestamp))
 
 
-async def retrieve_certificates(loop, url=None, ctl_offset=0,
-                                concurrency_count=DOWNLOAD_CONCURRENCY, timestamp=0):
+async def retrieve_certificates(loop, urls, download_concurrency, mass_concurrency, timestamp=0):
+    barrier = aioprocessing.AioBarrier(mass_concurrency + 1)
     async with aiohttp.ClientSession(loop=loop, conn_timeout=10) as session:
         ctl_logs = await certlib.retrieve_all_ctls(session)
-        if url:
-            url = url.strip("'")
-
         for log in ctl_logs:
-            if url and url not in log['url']:
+            if log['url'] not in urls:
                 continue
             work_deque = deque()
-            download_results_queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+            download_results_queue = asyncio.Queue(maxsize=DOWNLOAD_QUEUE_SIZE)
             manager = aioprocessing.AioManager()
             parse_results_queue = manager.Queue(maxsize=MASS_QUEUE_SIZE)
 
@@ -111,34 +113,30 @@ async def retrieve_certificates(loop, url=None, ctl_offset=0,
                 continue
 
             try:
-                await certlib.populate_work(work_deque, log_info, start=ctl_offset)
+                await certlib.populate_work(work_deque, log_info, start=0)
             except Exception as e:
                 logging.error("Log needs no update - {}".format(e))
                 continue
             download_tasks = asyncio.gather(*[
                 download_worker(session, log_info, work_deque, download_results_queue, timestamp)
-                for _ in range(concurrency_count)
+                for _ in range(download_concurrency)
             ])
-            processing_task = asyncio.ensure_future(
-                processing_coro(download_results_queue, parse_results_queue))
+            processing_task = asyncio.ensure_future(processing_coro(download_results_queue, parse_results_queue))
             asyncio.ensure_future(download_tasks)
 
-            mass_task = asyncio.ensure_future(
-                mass_worker(parse_results_queue))
+            asyncio.ensure_future(mass_worker(parse_results_queue, mass_concurrency))
 
             await download_tasks
             await download_results_queue.put(None)  # Downloads are done, processing can stop
             await processing_task
-            for _ in range(0, 8):
+            for _ in range(0, mass_concurrency):
+                print('put')
                 parse_results_queue.put(None)
-            await mass_task
+                print('putted')
+            print('Parsing complete. MASS Queue: {}'.format(parse_results_queue.qsize() - mass_concurrency))
+            barrier.wait()
 
-            logging.info("Completed {}, stored at {}!".format(
-                log_info['description'],
-                '/tmp/{}.csv'.format(log_info['url'].replace('/', '_'))
-            ))
-
-            logging.info("Finished downloading and processing {}".format(log_info['url']))
+            logging.info('Completed.')
 
 
 async def processing_coro(download_results_queue, parse_result_queue):
@@ -152,7 +150,7 @@ async def processing_coro(download_results_queue, parse_result_queue):
         logging.info("Getting things to process...")
         for _ in range(int(process_pool.pool_workers)):
             entries = await download_results_queue.get()
-            if entries != None:
+            if entries is not None:
                 entries_iter.append(entries)
             else:
                 done = True
@@ -166,6 +164,8 @@ async def processing_coro(download_results_queue, parse_result_queue):
 
         if done:
             break
+
+    process_pool.close()
 
     await process_pool.coro_join()
 
@@ -182,7 +182,7 @@ def process_worker(arg):
         for entry in result_info['entries']:
             mtl = certlib.MerkleTreeHeader.parse(base64.b64decode(entry['leaf_input']))
 
-            if mtl.Timestamp/1000 < timestamp:
+            if mtl.Timestamp / 1000 < timestamp:
                 continue
 
             cert_data = {}
@@ -215,7 +215,7 @@ def process_worker(arg):
                                    'all_domains': cert_data['leaf_cert']['all_domains'],
                                    'not_before': str(cert_data['leaf_cert']['not_before']),
                                    'not_after': str(cert_data['leaf_cert']['not_after']),
-                                   'sct_timestamp': mtl.Timestamp/1000})
+                                   'sct_timestamp': mtl.Timestamp / 1000})
     except Exception as e:
         print("========= EXCEPTION =========")
         traceback.print_exc()
@@ -226,45 +226,40 @@ def process_worker(arg):
 
 
 def main():
-    mac.ConnectionManager().register_connection('default',
-
-                                                'IjVhNzVkNzA2NjEzYmM2MzExNmY5MWM3YSI.4ob8hg4nH99dYtw97y4hQVzyvVs',
-                                                'http://localhost:5000/api')
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+    ctl_urls = config.get('General', 'CT Logs')
+    mass_concurrency = config.get('General', 'MASS concurrency')
+    download_concurrency = config.get('General', 'download concurrency')
+    timestamp_filter = config.get('General', 'filter')
 
     loop = asyncio.get_event_loop()
 
     parser = argparse.ArgumentParser(description='Pull down certificate transparency list information')
 
-    parser.add_argument('-f', dest='log_file', action='store', default='/tmp/axeman.log',
-                        help='location for the axeman log file')
+    parser.add_argument('-u', dest="ctl_urls", action="store", default=ctl_urls, help="Retrieve this CTLs")
 
-    parser.add_argument('-s', dest='start_offset', action='store', default=0,
-                        help='Skip N number of lists before starting')
-
-    parser.add_argument('-u', dest="ctl_url", action="store", default=None, help="Retrieve this CTL only")
-
-    parser.add_argument('-z', dest="ctl_offset", action="store", default=0, help="The CTL offset to start at")
-
-    parser.add_argument('-c', dest='concurrency_count', action='store', default=50, type=int,
+    parser.add_argument('-c', dest='download_concurrency', action='store', default=download_concurrency, type=int,
                         help="The number of concurrent downloads to run at a time")
 
-    parser.add_argument('-t', dest='timestamp', action='store', default=0, type=int,
+    parser.add_argument('-m', dest='mass_concurrency', action='store', default=mass_concurrency, type=int,
+                        help="The number of concurrent downloads to run at a time")
+
+    parser.add_argument('-f', dest='timestamp_filter', action='store', default=timestamp_filter, type=int,
                         help="Certificates with a SCT older than this value are ignored.")
 
     args = parser.parse_args()
 
-    handlers = [logging.FileHandler(args.log_file), logging.StreamHandler()]
-
-    logging.basicConfig(format='[%(levelname)s:%(name)s] %(asctime)s - %(message)s', level=logging.INFO,
-                            handlers=handlers)
+    logging.basicConfig(format='[%(levelname)s:%(name)s] %(asctime)s - %(message)s', level=logging.INFO)
 
     logging.info("Starting...")
+    mac.ConnectionManager().register_connection('default', config.get('General', 'MASS api key'),
+                                                config.get('General', 'MASS server address'))
 
-    if args.ctl_url:
-        loop.run_until_complete(retrieve_certificates(loop, url=args.ctl_url, ctl_offset=int(args.ctl_offset),
-                                                      concurrency_count=args.concurrency_count, timestamp=args.timestamp))
-    else:
-        loop.run_until_complete(retrieve_certificates(loop, concurrency_count=args.concurrency_count, timestamp=args.timestamp))
+    loop.run_until_complete(
+        retrieve_certificates(loop, download_concurrency=args.download_concurrency, timestamp=args.timestamp_filter,
+                              urls=args.ctl_urls.replace(' ', '').split(','),
+                              mass_concurrency=args.mass_concurrency))
 
 
 if __name__ == "__main__":
