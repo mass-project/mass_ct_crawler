@@ -16,7 +16,7 @@ from OpenSSL import crypto
 from mass_api_client.resources import *
 from mass_api_client.utils import get_or_create_analysis_system_instance
 
-import certlib
+from ct_crawler import certlib
 
 try:
     locale.setlocale(locale.LC_ALL, 'en_US.utf8')
@@ -238,7 +238,7 @@ def main():
                         help="The number of concurrent downloads to run at a time")
 
     parser.add_argument('-m', dest='mass_concurrency', action='store', default=mass_concurrency, type=int,
-                        help="The number of concurrent downloads to run at a time")
+                        help="The number of concurrent MASS submitter to run at a time")
 
     parser.add_argument('-f', dest='timestamp_filter', action='store', default=timestamp_filter, type=int,
                         help="Certificates with a SCT older than this value are ignored.")
