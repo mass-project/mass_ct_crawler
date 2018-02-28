@@ -4,7 +4,7 @@ Utility for crawling certificate transparency servers and submitting CT informat
 #List of Suitable CT Servers 
 
 Name | Cert Count | Max Block Size | URL | Active
------|-----|------------|-------------------------
+-----|------------|----------------|-----|-------
 Google 'Aviator' log | 46466471 | 1024 | ct.googleapis.com/aviator | no
 Google 'Icarus' log | 186657087 | 1024 | ct.googleapis.com/icarus | yes
 Google 'Pilot' log | 206952402 | 1024 | ct.googleapis.com/pilot | yes
