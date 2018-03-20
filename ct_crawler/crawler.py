@@ -11,7 +11,7 @@ from collections import deque
 
 import aiohttp
 import aioprocessing
-# from ct_crawler import certlib
+#from ct_crawler import certlib
 import certlib
 import mass_api_client as mac
 import requests
@@ -226,16 +226,21 @@ def process_worker(arg):
     return parsed_results
 
 
-def submit_ctls_to_mass(urls, anal_system_instance):
+def submit_ctls_to_mass(urls, anal_system_instance, fetch_all):
     logging.info("Submitting following CTLogs to MASS: {}".format(urls))
     for url in urls:
         for i in range(3):
             try:
                 s = Sample.create(domain=url, tags=['ctlog'])
                 scheduled = anal_system_instance.schedule_analysis(s)
-                scheduled.create_report(
-                    json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': 0})},
-                )
+                if not fetch_all:
+                    scheduled.create_report(
+                        json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': 0})},
+                    )
+                else:
+                    scheduled.create_report(
+                        json_report_objects={'ctl_report': ('ctl_report', {'initial': False, 'offset': 0})},
+                    )
                 break
             except requests.HTTPError:
                 if i == 2:
@@ -250,7 +255,8 @@ def get_ctls_from_mass():
         if 'ctlog' in ctl.tags:
             # assumption: report[0] is the latest report
             report = ctl.get_reports()[0]
-            dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'], 'offset':report.json_reports['ctl_report']['offset']}
+            dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'],
+                                                'offset':report.json_reports['ctl_report']['offset']}
 
     return dict
 
@@ -265,8 +271,8 @@ def create_ctl_report(anal_system_instance, domain, offset):
 
         scheduled = anal_system_instance.schedule_analysis(ctl)
         scheduled.create_report(
-            json_report_objects={'ctl_report': ('ctl_report', {'time': new_time, 'initial': False, 'offset': offset, 'delta': delta})},
-        )
+            json_report_objects={'ctl_report': ('ctl_report', {'time': new_time, 'initial': False, 'offset': offset,
+                                                               'delta': delta})})
         break
 
 
@@ -279,6 +285,7 @@ def main():
     crawl_once = config.getboolean('General', 'crawl once')
     time_sleep = config.get('General', 'time sleep')
     add_urls = config.getboolean('General', 'add CT Logs')
+    fetch_all = config.getboolean('General', 'fetch all')
 
     loop = asyncio.get_event_loop()
 
@@ -286,6 +293,9 @@ def main():
 
     parser.add_argument('-u', dest="ctl_urls", action="store_true", default=add_urls,
                         help="Retrieve the CTLs defined in config.ini additionally to CTLs stored in MASS")
+
+    parser.add_argument('-a', dest="fetch_all", action="store_true", default=fetch_all,
+                        help="Fetch all entries from CTL.")
 
     parser.add_argument('-c', dest='download_concurrency', action='store', default=download_concurrency, type=int,
                         help="The number of concurrent downloads to run at a time")
@@ -313,7 +323,7 @@ def main():
                                                                   )
 
     if args.ctl_urls:
-        submit_ctls_to_mass(ctl_urls.replace(' ', '').split(','), anal_system_instance)
+        submit_ctls_to_mass(ctl_urls.replace(' ', '').split(','), anal_system_instance, fetch_all)
 
     loop.run_until_complete(
         retrieve_certificates(loop, download_concurrency=args.download_concurrency, anal_system_instance=anal_system_instance,
