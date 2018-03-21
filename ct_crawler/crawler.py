@@ -277,8 +277,8 @@ def create_ctl_report(anal_system_instance, domain, offset):
 
 
 def main():
-    #config = configparser.ConfigParser()
-    #config.read('config.ini')
+    config = configparser.ConfigParser()
+    config.read('config.ini')
 
     api_key = os.getenv('MASS_API_KEY')
     print(api_key)
