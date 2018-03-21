@@ -277,10 +277,11 @@ def create_ctl_report(anal_system_instance, domain, offset):
 
 
 def main():
-    config = configparser.ConfigParser()
-    config.read('config.ini')
+    #config = configparser.ConfigParser()
+    #config.read('config.ini')
 
-    api_key = os.environ.get('MASS_API_KEY', config.get('General', 'MASS api key'))
+    api_key = os.getenv('MASS_API_KEY')
+    print(api_key)
     server_addr = os.environ.get('MASS_SERVER_ADDR', config.get('General', 'MASS server address'))
     ctl_urls = os.environ.get('CTL_URLS', config.get('General', 'CT Logs'))
     mass_concurrency = os.environ.get('MASS_CONCURRENCY', config.get('General', 'MASS concurrency'))
@@ -289,7 +290,6 @@ def main():
     time_sleep = os.environ.get('TIME_SLEEP', config.get('General', 'time sleep'))
     add_urls = os.environ.get('ADD_URLS', config.get('General', 'add CT Logs'))
     fetch_all = os.environ.get('FETCH_ALL', config.get('General', 'fetch all'))
-
 
 
 
@@ -322,18 +322,22 @@ def main():
 
     logging.info("Starting...")
     mac.ConnectionManager().register_connection('default', api_key, server_addr)
+    print(api_key)
+    print(server_addr)
+    print(ctl_urls)
+
 
     anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
                                                                   verbose_name='ct_crawler',
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
 
-    if args.ctl_urls == 1:
-        submit_ctls_to_mass(ctl_urls.replace(' ', '').split(','), anal_system_instance, args.fetch_all)
+    if int(args.ctl_urls) == 1:
+        submit_ctls_to_mass(ctl_urls.replace(' ', '').split(','), anal_system_instance, int(args.fetch_all))
 
     loop.run_until_complete(
         retrieve_certificates(loop, download_concurrency=args.download_concurrency, anal_system_instance=anal_system_instance,
-                              mass_concurrency=args.mass_concurrency, time_sec=args.time_sleep, once=args.crawl_once))
+                              mass_concurrency=args.mass_concurrency, time_sec=args.time_sleep, once=int(args.crawl_once)))
 
 
 if __name__ == "__main__":
