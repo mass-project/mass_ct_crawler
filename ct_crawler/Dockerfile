@@ -14,4 +14,4 @@ COPY requirements.txt /
 RUN pip3 install -r /requirements.txt
 
 ADD . /
-ENTRYPOINT ["python3", "bla.py"]
+ENTRYPOINT ["python3", "crawler.py"]
