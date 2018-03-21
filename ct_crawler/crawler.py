@@ -135,7 +135,7 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                     parse_results_queue.put(None)
                 print('Parsing complete. MASS Queue: {}'.format(parse_results_queue.qsize()))
                 await mass_task
-            if not once:
+            if once == 0:
                 after = time.time()
                 new = time_sec - (after - pre)
                 logging.info('Completed. Sleeping for {} seconds.'.format(int(new)))
@@ -233,7 +233,7 @@ def submit_ctls_to_mass(urls, anal_system_instance, fetch_all):
             try:
                 s = Sample.create(domain=url, tags=['ctlog'])
                 scheduled = anal_system_instance.schedule_analysis(s)
-                if not fetch_all:
+                if fetch_all == 0:
                     scheduled.create_report(
                         json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': 0})},
                     )
@@ -279,22 +279,29 @@ def create_ctl_report(anal_system_instance, domain, offset):
 def main():
     config = configparser.ConfigParser()
     config.read('config.ini')
-    ctl_urls = config.get('General', 'CT Logs')
-    mass_concurrency = config.get('General', 'MASS concurrency')
-    download_concurrency = config.get('General', 'download concurrency')
-    crawl_once = config.getboolean('General', 'crawl once')
-    time_sleep = config.get('General', 'time sleep')
-    add_urls = config.getboolean('General', 'add CT Logs')
-    fetch_all = config.getboolean('General', 'fetch all')
+
+    api_key = os.environ.get('MASS_API_KEY', config.get('General', 'MASS api key'))
+    server_addr = os.environ.get('MASS_SERVER_ADDR', config.get('General', 'MASS server address'))
+    ctl_urls = os.environ.get('CTL_URLS', config.get('General', 'CT Logs'))
+    mass_concurrency = os.environ.get('MASS_CONCURRENCY', config.get('General', 'MASS concurrency'))
+    download_concurrency = os.environ.get('DOWNLOAD_CONCURRENCY', config.get('General', 'download concurrency'))
+    crawl_once = os.environ.get('CRAWL_ONCE', config.get('General', 'crawl once'))
+    time_sleep = os.environ.get('TIME_SLEEP', config.get('General', 'time sleep'))
+    add_urls = os.environ.get('ADD_URLS', config.get('General', 'add CT Logs'))
+    fetch_all = os.environ.get('FETCH_ALL', config.get('General', 'fetch all'))
+
+
+
+
 
     loop = asyncio.get_event_loop()
 
     parser = argparse.ArgumentParser(description='Pull down certificate transparency list and store it in MASS.')
 
-    parser.add_argument('-u', dest="ctl_urls", action="store_true", default=add_urls,
+    parser.add_argument('-u', dest="ctl_urls", action="store", default=add_urls,
                         help="Retrieve the CTLs defined in config.ini additionally to CTLs stored in MASS")
 
-    parser.add_argument('-a', dest="fetch_all", action="store_true", default=fetch_all,
+    parser.add_argument('-a', dest="fetch_all", action="store", default=fetch_all,
                         help="Fetch all entries from CTL.")
 
     parser.add_argument('-c', dest='download_concurrency', action='store', default=download_concurrency, type=int,
@@ -303,7 +310,7 @@ def main():
     parser.add_argument('-m', dest='mass_concurrency', action='store', default=mass_concurrency, type=int,
                         help="The number of concurrent MASS submitter to run at a time")
 
-    parser.add_argument('-o', dest='crawl_once', action='store_true', default=crawl_once,
+    parser.add_argument('-o', dest='crawl_once', action='store', default=crawl_once,
                         help='Crawl only once.')
 
     parser.add_argument('-t', dest='time_sleep', action='store', default=time_sleep, type=int,
@@ -314,16 +321,15 @@ def main():
     logging.basicConfig(format='[%(levelname)s:%(name)s] %(asctime)s - %(message)s', level=logging.INFO)
 
     logging.info("Starting...")
-    mac.ConnectionManager().register_connection('default', config.get('General', 'MASS api key'),
-                                                config.get('General', 'MASS server address'))
+    mac.ConnectionManager().register_connection('default', api_key, server_addr)
 
     anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
                                                                   verbose_name='ct_crawler',
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
 
-    if args.ctl_urls:
-        submit_ctls_to_mass(ctl_urls.replace(' ', '').split(','), anal_system_instance, fetch_all)
+    if args.ctl_urls == 1:
+        submit_ctls_to_mass(ctl_urls.replace(' ', '').split(','), anal_system_instance, args.fetch_all)
 
     loop.run_until_complete(
         retrieve_certificates(loop, download_concurrency=args.download_concurrency, anal_system_instance=anal_system_instance,
