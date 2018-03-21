@@ -249,7 +249,7 @@ def submit_ctls_to_mass(urls, anal_system_instance, fetch_all):
 
 def get_ctls_from_mass():
     dict = {}
-    ctls = Sample.query(tags_contains='ctlog')
+    ctls = Sample.query(tags__contains='ctlog')
     for ctl in ctls:
         report = ctl.get_reports()[0]
         dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'],
