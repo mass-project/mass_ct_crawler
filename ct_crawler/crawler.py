@@ -249,13 +249,10 @@ def submit_ctls_to_mass(urls, anal_system_instance, fetch_all):
 
 def get_ctls_from_mass():
     dict = {}
-    # TODO: BUG??? ctls = Sample.query(tags__all='ctlog')
-    ctls = Sample.query()
+    ctls = Sample.query(tags_contains='ctlog')
     for ctl in ctls:
-        if 'ctlog' in ctl.tags:
-            # assumption: report[0] is the latest report
-            report = ctl.get_reports()[0]
-            dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'],
+        report = ctl.get_reports()[0]
+        dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'],
                                                 'offset':report.json_reports['ctl_report']['offset']}
 
     return dict
