@@ -2,6 +2,7 @@ import base64
 import math
 
 import datetime
+import time
 from collections import OrderedDict
 
 from OpenSSL import crypto
@@ -41,18 +42,24 @@ PreCertEntry = Struct(
 
 
 async def retrieve_all_ctls(session=None):
-    async with session.get(CTL_LISTS) as response:
-        ctl_lists = await response.json()
+    while 1:
+        try:
+            async with session.get(CTL_LISTS) as response:
+                ctl_lists = await response.json()
 
-        logs = ctl_lists['logs']
+                logs = ctl_lists['logs']
 
-        for log in logs:
-            if log['url'].endswith('/'):
-                log['url'] = log['url'][:-1]
-            owner = _get_owner(log, ctl_lists['operators'])
-            log['operated_by'] = owner
+                for log in logs:
+                    if log['url'].endswith('/'):
+                        log['url'] = log['url'][:-1]
+                    owner = _get_owner(log, ctl_lists['operators'])
+                    log['operated_by'] = owner
 
-        return logs
+                return logs
+        except:
+            print("Cannot reach 'https://www.gstatic.com/ct/log_list/log_list.json'.")
+            time.sleep(3)
+
 
 
 def _get_owner(log, owners):
