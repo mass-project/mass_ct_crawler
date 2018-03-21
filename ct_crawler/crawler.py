@@ -281,7 +281,6 @@ def main():
     config.read('config.ini')
 
     api_key = os.getenv('MASS_API_KEY')
-    print(api_key)
     server_addr = os.environ.get('MASS_SERVER_ADDR', config.get('General', 'MASS server address'))
     ctl_urls = os.environ.get('CTL_URLS', config.get('General', 'CT Logs'))
     mass_concurrency = os.environ.get('MASS_CONCURRENCY', config.get('General', 'MASS concurrency'))
@@ -322,10 +321,6 @@ def main():
 
     logging.info("Starting...")
     mac.ConnectionManager().register_connection('default', api_key, server_addr)
-    print(api_key)
-    print(server_addr)
-    print(ctl_urls)
-
 
     anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
                                                                   verbose_name='ct_crawler',
@@ -337,7 +332,7 @@ def main():
 
     loop.run_until_complete(
         retrieve_certificates(loop, download_concurrency=args.download_concurrency, anal_system_instance=anal_system_instance,
-                              mass_concurrency=args.mass_concurrency, time_sec=args.time_sleep, once=int(args.crawl_once)))
+                              mass_concurrency=args.mass_concurrency, time_sec=int(args.time_sleep), once=int(args.crawl_once)))
 
 
 if __name__ == "__main__":
