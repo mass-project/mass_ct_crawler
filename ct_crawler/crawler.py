@@ -11,8 +11,8 @@ from collections import deque
 
 import aiohttp
 import aioprocessing
-#from ct_crawler import certlib
-import certlib
+from ct_crawler import certlib
+#import certlib
 import mass_api_client as mac
 import requests
 from OpenSSL import crypto
@@ -88,15 +88,15 @@ async def download_worker(session, log_info, work_deque, download_queue, report)
                                    }, report))
 
 
-async def retrieve_certificates(loop, download_concurrency, mass_concurrency, time_sec, once, anal_system_instance):
+async def retrieve_certificates(loop, download_concurrency, mass_concurrency, time_sec, once, anal_system_instance, ctl):
     async with aiohttp.ClientSession(loop=loop, conn_timeout=10) as session:
         while True:
             pre = time.time()
-            urls = get_ctls_from_mass()
             ctl_logs = await certlib.retrieve_all_ctls(session)
             for log in ctl_logs:
-                if log['url'] not in urls:
+                if log['url'] != ctl:
                     continue
+                log_data = get_ctl_from_mass(log['url'])
                 work_deque = deque()
                 download_results_queue = asyncio.Queue(maxsize=DOWNLOAD_QUEUE_SIZE)
                 manager = aioprocessing.AioManager()
@@ -110,12 +110,13 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                     logging.error("Failed to connect to CTL! -> {} - skipping.".format(e))
                     continue
 
-                if urls[log['url']]['initial'] is True:
-                    urls[log['url']]['offset'] = log_info['tree_size']
+                if log_data['initial'] is True:
+                    log_data['offset'] = log_info['tree_size'] - log_data['offset']
                 create_ctl_report(anal_system_instance, log['url'], log_info['tree_size'])
 
+
                 try:
-                    await certlib.populate_work(work_deque, log_info, start=urls[log['url']]['offset'])
+                    await certlib.populate_work(work_deque, log_info, start=log_data['offset'])
                 except Exception as e:
                     logging.error("Log needs no update - {}".format(e))
                     continue
@@ -226,56 +227,36 @@ def process_worker(arg):
     return parsed_results
 
 
-def submit_ctls_to_mass(urls, anal_system_instance, fetch_all):
-    logging.info("Submitting following CTLogs to MASS: {}".format(urls))
-    for url in urls:
-        for i in range(3):
-            try:
-                s = Sample.create(domain=url, tags=['ctlog'])
-                scheduled = anal_system_instance.schedule_analysis(s)
-                if fetch_all == 0:
-                    scheduled.create_report(
-                        json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': 0})},
-                    )
-                else:
-                    scheduled.create_report(
-                        json_report_objects={'ctl_report': ('ctl_report', {'initial': False, 'offset': 0})},
-                    )
-                break
-            except requests.HTTPError:
-                if i == 2:
-                    logging.error('HTTPError while creating a CTL sample.')
-
-
-def get_ctls_from_mass():
-    """ctls = Sample.query(tags__contains='ctlog')
-    ctl_dict = {}
-    for ctl in ctls:
+def submit_ctls_to_mass(url, anal_system_instance, crawl_depth):
+    print(url, ['ctlog', url])
+    s = Sample.create(domain=url, tags=['ctlog', url])
+    scheduled = anal_system_instance.schedule_analysis(s)
+    scheduled.create_report(
+        json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': crawl_depth})},
+    )
+    """logging.info("Submitting following CTLog to MASS: {}".format(url))
+    for i in range(3):
         try:
-            report = ctl.get_reports()[0]
-            if report:
-                initial = report.json_reports['ctl_report']['initial']
-                offset = report.json_reports['ctl_report']['offset']
-                ctl_dict[ctl.unique_features.domain] = {'initial': initial, 'offset': offset}
-
-            return ctl_dict
+            print(url, ['ctlog', url])
+            s = Sample.create(uri=url, tags=['ctlog', url])
+            scheduled = anal_system_instance.schedule_analysis(s)
+            scheduled.create_report(
+                json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': crawl_depth})},
+            )
+            break
         except requests.HTTPError:
-            try:
-                print(ctl.has_domain())
-            except:
-                print('CANNOT GET DOMAIN')"""
-    ctls = Sample.query(tags__contains='ctlog')
-    ctl_dict = {}
+            if i == 2:
+                logging.error('HTTPError while creating a CTL sample.')"""
+
+
+def get_ctl_from_mass(domain):
+    ctls = Sample.query(domain=domain)
     for ctl in ctls:
-        try:
-            report = ctl.get_reports()[0]
-            initial = report.json_reports['ctl_report']['initial']
-            offset = report.json_reports['ctl_report']['offset']
-            ctl_dict[ctl.unique_features.domain] = {'initial': initial, 'offset': offset}
+        report = ctl.get_reports()[0]
+        initial = report.json_reports['ctl_report']['initial']
+        offset = report.json_reports['ctl_report']['offset']
+        return {'initial': initial, 'offset': offset}
 
-        except requests.HTTPError:
-            print(ctl.has_domain())
-    return ctl_dict
 
 def create_ctl_report(anal_system_instance, domain, offset):
     new_time = time.time()
@@ -296,15 +277,15 @@ def main():
     config = configparser.ConfigParser()
     config.read('config.ini')
 
-    api_key = os.getenv('MASS_API_KEY')
+    api_key = os.getenv('MASS_API_KEY', config.get('General', 'MASS api key'))
     server_addr = os.environ.get('MASS_SERVER_ADDR', config.get('General', 'MASS server address'))
-    ctl_urls = os.environ.get('CTL_URLS', config.get('General', 'CT Logs'))
+    ct_logs = os.environ.get('CT_LOGS', config.get('General', 'CT Logs'))
     mass_concurrency = os.environ.get('MASS_CONCURRENCY', config.get('General', 'MASS concurrency'))
     download_concurrency = os.environ.get('DOWNLOAD_CONCURRENCY', config.get('General', 'download concurrency'))
     crawl_once = os.environ.get('CRAWL_ONCE', config.get('General', 'crawl once'))
     time_sleep = os.environ.get('TIME_SLEEP', config.get('General', 'time sleep'))
-    add_urls = os.environ.get('ADD_URLS', config.get('General', 'add CT Logs'))
-    fetch_all = os.environ.get('FETCH_ALL', config.get('General', 'fetch all'))
+    add_urls = os.environ.get('ADD_URLS', config.get('General', 'add CT Log'))
+    crawl_depth = os.environ.get('CRAWL_DEPTH', config.get('General', 'first crawl depth'))
 
 
 
@@ -313,11 +294,8 @@ def main():
 
     parser = argparse.ArgumentParser(description='Pull down certificate transparency list and store it in MASS.')
 
-    parser.add_argument('-u', dest="ctl_urls", action="store", default=add_urls,
+    parser.add_argument('-u', dest="add_urls", action="store", default=add_urls,
                         help="Retrieve the CTLs defined in config.ini additionally to CTLs stored in MASS")
-
-    parser.add_argument('-a', dest="fetch_all", action="store", default=fetch_all,
-                        help="Fetch all entries from CTL.")
 
     parser.add_argument('-c', dest='download_concurrency', action='store', default=download_concurrency, type=int,
                         help="The number of concurrent downloads to run at a time")
@@ -342,14 +320,13 @@ def main():
                                                                   verbose_name='ct_crawler',
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
-
-    if int(args.ctl_urls) == 1:
-        print('Adding new CTLs to MASS...')
-        submit_ctls_to_mass(ctl_urls.replace(' ', '').split(','), anal_system_instance, int(args.fetch_all))
+    if int(args.add_urls) == 1:
+        print('Adding new CTL to MASS...')
+        submit_ctls_to_mass(ct_logs, anal_system_instance, int(crawl_depth))
 
     loop.run_until_complete(
         retrieve_certificates(loop, download_concurrency=args.download_concurrency, anal_system_instance=anal_system_instance,
-                              mass_concurrency=args.mass_concurrency, time_sec=int(args.time_sleep), once=int(args.crawl_once)))
+                              mass_concurrency=args.mass_concurrency, time_sec=int(args.time_sleep), once=int(args.crawl_once), ctl=ct_logs))
 
 
 if __name__ == "__main__":
