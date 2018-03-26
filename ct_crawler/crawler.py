@@ -248,13 +248,15 @@ def submit_ctls_to_mass(urls, anal_system_instance, fetch_all):
 
 
 def get_ctls_from_mass():
-    ctl_dict = {}
     ctls = Sample.query(tags__contains='ctlog')
     for ctl in ctls:
         try:
+            ctl_dict = {}
             report = ctl.get_reports()[0]
-            ctl_dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'],
-                                                    'offset': report.json_reports['ctl_report']['offset']}
+            initial = report.json_reports['ctl_report']['initial']
+            offset = report.json_reports['ctl_report']['offset']
+            ctl_dict[ctl.unique_features.domain] = {'initial': initial, 'offset': offset}
+            
             return ctl_dict
         except requests.HTTPError:
             try:
