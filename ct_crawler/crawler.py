@@ -47,7 +47,7 @@ def mass(queue):
             break
         for i in range(3):
             try:
-                s = Sample.create(domain=entry['all_domains'][0], tags=['domain_with_cert'])
+                s = Sample.create(domain=entry['all_domains'][0], tags=['domain_with_cert', entry['log_url']])
                 scheduled = anal_system_instance.schedule_analysis(s)
                 scheduled.create_report(
                     json_report_objects={'domain_report': ('domain_report', entry)},
@@ -97,6 +97,10 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                 if log['url'] != ctl:
                     continue
                 log_data = get_ctl_from_mass(log['url'])
+                if log_data is None:
+                    print('No CTL entry found in database.')
+                    break
+
                 work_deque = deque()
                 download_results_queue = asyncio.Queue(maxsize=DOWNLOAD_QUEUE_SIZE)
                 manager = aioprocessing.AioManager()
@@ -112,8 +116,6 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
 
                 if log_data['initial'] is True:
                     log_data['offset'] = log_info['tree_size'] - log_data['offset']
-                create_ctl_report(anal_system_instance, log['url'], log_info['tree_size'])
-
 
                 try:
                     await certlib.populate_work(work_deque, log_info, start=log_data['offset'])
@@ -121,7 +123,7 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                     logging.error("Log needs no update - {}".format(e))
                     continue
                 download_tasks = asyncio.gather(*[
-                    download_worker(session, log_info, work_deque, download_results_queue, urls[log['url']])
+                    download_worker(session, log_info, work_deque, download_results_queue, log_data)
                     for _ in range(download_concurrency)
                 ])
                 processing_task = asyncio.ensure_future(processing_coro(download_results_queue, parse_results_queue))
@@ -136,6 +138,9 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                     parse_results_queue.put(None)
                 print('Parsing complete. MASS Queue: {}'.format(parse_results_queue.qsize()))
                 await mass_task
+
+                create_ctl_report(anal_system_instance, log['url'], log_info['tree_size'])
+
             if once == 0:
                 after = time.time()
                 new = time_sec - (after - pre)
@@ -227,18 +232,10 @@ def process_worker(arg):
     return parsed_results
 
 
-def submit_ctls_to_mass(url, anal_system_instance, crawl_depth):
-    print(url, ['ctlog', url])
-    s = Sample.create(domain=url, tags=['ctlog', url])
-    scheduled = anal_system_instance.schedule_analysis(s)
-    scheduled.create_report(
-        json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': crawl_depth})},
-    )
-    """logging.info("Submitting following CTLog to MASS: {}".format(url))
+def submit_ctl_to_mass(url, anal_system_instance, crawl_depth):
     for i in range(3):
         try:
-            print(url, ['ctlog', url])
-            s = Sample.create(uri=url, tags=['ctlog', url])
+            s = Sample.create(domain=url, tags=['ctlog', url])
             scheduled = anal_system_instance.schedule_analysis(s)
             scheduled.create_report(
                 json_report_objects={'ctl_report': ('ctl_report', {'initial': True, 'offset': crawl_depth})},
@@ -246,16 +243,21 @@ def submit_ctls_to_mass(url, anal_system_instance, crawl_depth):
             break
         except requests.HTTPError:
             if i == 2:
-                logging.error('HTTPError while creating a CTL sample.')"""
+                logging.error('HTTPError while creating a CTL sample.')
 
 
 def get_ctl_from_mass(domain):
-    ctls = Sample.query(domain=domain)
-    for ctl in ctls:
-        report = ctl.get_reports()[0]
-        initial = report.json_reports['ctl_report']['initial']
-        offset = report.json_reports['ctl_report']['offset']
-        return {'initial': initial, 'offset': offset}
+    while True:
+        try:
+            ctls = Sample.query(domain=domain)
+            for ctl in ctls:
+                report = ctl.get_reports()[0]
+                initial = report.json_reports['ctl_report']['initial']
+                offset = report.json_reports['ctl_report']['offset']
+                return {'initial': initial, 'offset': offset}
+            return None
+        except requests.HTTPError:
+            print('HTTPError while getting CTL Sample from MASS.')
 
 
 def create_ctl_report(anal_system_instance, domain, offset):
@@ -322,7 +324,7 @@ def main():
                                                                   )
     if int(args.add_urls) == 1:
         print('Adding new CTL to MASS...')
-        submit_ctls_to_mass(ct_logs, anal_system_instance, int(crawl_depth))
+        submit_ctl_to_mass(ct_logs, anal_system_instance, int(crawl_depth))
 
     loop.run_until_complete(
         retrieve_certificates(loop, download_concurrency=args.download_concurrency, anal_system_instance=anal_system_instance,
