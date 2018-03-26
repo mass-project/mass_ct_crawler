@@ -248,21 +248,19 @@ def submit_ctls_to_mass(urls, anal_system_instance, fetch_all):
 
 
 def get_ctls_from_mass():
-    dict = {}
+    ctl_dict = {}
     ctls = Sample.query(tags__contains='ctlog')
     for ctl in ctls:
         try:
             report = ctl.get_reports()[0]
+            ctl_dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'],
+                                                    'offset': report.json_reports['ctl_report']['offset']}
+            return ctl_dict
         except requests.HTTPError:
             try:
                 print(ctl.has_domain())
             except:
                 print('CANNOT GET DOMAIN')
-        dict[ctl.unique_features.domain] = {'initial': report.json_reports['ctl_report']['initial'],
-                                                'offset':report.json_reports['ctl_report']['offset']}
-
-    return dict
-
 
 def create_ctl_report(anal_system_instance, domain, offset):
     new_time = time.time()
