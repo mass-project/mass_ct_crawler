@@ -274,10 +274,7 @@ def get_ctls_from_mass():
             ctl_dict[ctl.unique_features.domain] = {'initial': initial, 'offset': offset}
 
         except requests.HTTPError:
-            try:
-                print(ctl.has_domain())
-            except:
-                print('CANNOT GET DOMAIN')
+            print(ctl.has_domain())
     return ctl_dict
 
 def create_ctl_report(anal_system_instance, domain, offset):
