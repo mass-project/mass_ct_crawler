@@ -47,7 +47,7 @@ def mass(queue):
             break
         for i in range(3):
             try:
-                s = Sample.create(domain=entry['all_domains'][0], tags=['domain_with_cert', entry['log_url']])
+                s = Sample.create(domain=entry['all_domains'][0], tags=['domain_with_cert', entry['log_url'], entry['wildcard']])
                 scheduled = anal_system_instance.schedule_analysis(s)
                 scheduled.create_report(
                     json_report_objects={'domain_report': ('domain_report', entry)},
@@ -218,11 +218,17 @@ def process_worker(arg):
             else:
                 continue
 
-            parsed_results.append({'log_url': result_info['log_info']['url'],
+            output = {'log_url': result_info['log_info']['url'],
                                    'all_domains': cert_data['leaf_cert']['all_domains'],
                                    'not_before': str(cert_data['leaf_cert']['not_before']),
                                    'not_after': str(cert_data['leaf_cert']['not_after']),
-                                   'sct_timestamp': mtl.Timestamp / 1000})
+                                   'sct_timestamp': mtl.Timestamp / 1000}
+            if cert_data['leaf_cert']['all_domains'][0].startswith('*.'):
+                output['wildcard'] = 'wildcard_true'
+            else:
+                output['wildcard'] = 'wildcard_false'
+
+            parsed_results.append(output)
     except Exception as e:
         print("========= EXCEPTION =========")
         traceback.print_exc()
@@ -280,7 +286,7 @@ def main():
     config.read('config.ini')
 
     api_key = os.getenv('MASS_API_KEY', config.get('General', 'MASS api key'))
-    server_addr = os.environ.get('MASS_SERVER_ADDR', config.get('General', 'MASS server address'))
+    server_addr = os.environ.get('MASS_SERVER', config.get('General', 'MASS server address'))
     ct_logs = os.environ.get('CT_LOGS', config.get('General', 'CT Logs'))
     mass_concurrency = os.environ.get('MASS_CONCURRENCY', config.get('General', 'MASS concurrency'))
     download_concurrency = os.environ.get('DOWNLOAD_CONCURRENCY', config.get('General', 'download concurrency'))
@@ -311,7 +317,17 @@ def main():
     parser.add_argument('-t', dest='time_sleep', action='store', default=time_sleep, type=int,
                         help='If crawl once with -o is NOT chosen this sets the time too sleep between crawls.')
 
+
     args = parser.parse_args()
+    print(ct_logs)
+    print(api_key)
+    print(server_addr)
+    print(args.add_urls)
+    print(download_concurrency)
+    print(mass_concurrency)
+    print(crawl_once)
+    print(time_sleep)
+    print(crawl_depth)
 
     logging.basicConfig(format='[%(levelname)s:%(name)s] %(asctime)s - %(message)s', level=logging.INFO)
 
