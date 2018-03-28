@@ -298,7 +298,7 @@ def main():
     time_sleep = os.environ.get('TIME_SLEEP', config.get('General', 'time sleep'))
     add_urls = os.environ.get('ADD_URLS', config.get('General', 'add CT Log'))
     crawl_depth = os.environ.get('CRAWL_DEPTH', config.get('General', 'first crawl depth'))
-
+    mass_timeout = int(os.environ.get('MASS_TIMEOUT', '60'))
 
 
 
@@ -335,7 +335,7 @@ def main():
     logging.basicConfig(format='[%(levelname)s:%(name)s] %(asctime)s - %(message)s', level=logging.INFO)
 
     logging.info("Starting...")
-    mac.ConnectionManager().register_connection('default', api_key, server_addr)
+    mac.ConnectionManager().register_connection('default', api_key, server_addr, timeout=mass_timeout)
 
     anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
                                                                   verbose_name='ct_crawler',
