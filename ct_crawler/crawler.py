@@ -11,8 +11,8 @@ from collections import deque
 
 import aiohttp
 import aioprocessing
-from ct_crawler import certlib
-#import certlib
+#from ct_crawler import certlib
+import certlib
 import mass_api_client as mac
 import requests
 from OpenSSL import crypto
