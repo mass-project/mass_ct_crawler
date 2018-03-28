@@ -262,8 +262,11 @@ def get_ctl_from_mass(domain):
                 offset = report.json_reports['ctl_report']['offset']
                 return {'initial': initial, 'offset': offset}
             return None
-        except requests.HTTPError:
-            print('HTTPError while getting CTL Sample from MASS.')
+        except requests.HTTPError as e:
+            print("========= EXCEPTION =========")
+            traceback.print_exc()
+            print(e)
+            print("=============================")
 
 
 def create_ctl_report(anal_system_instance, domain, offset):
