@@ -271,9 +271,10 @@ def create_ctl_report(anal_system_instance, domain, offset):
     ctls = Sample.query(domain=domain)
 
     for ctl in ctls:
-        old = ctl.get_reports()[0].json_reports['ctl_report']['offset']
+        old_report = ctl.get_reports()[0]
+        old = old_report.json_reports['ctl_report']['offset']
+        old_report.delete()
         delta = offset - old
-
         scheduled = anal_system_instance.schedule_analysis(ctl)
         scheduled.create_report(
             json_report_objects={'ctl_report': ('ctl_report', {'time': new_time, 'initial': False, 'offset': offset,
@@ -316,7 +317,6 @@ def main():
 
     parser.add_argument('-t', dest='time_sleep', action='store', default=time_sleep, type=int,
                         help='If crawl once with -o is NOT chosen this sets the time too sleep between crawls.')
-
 
     args = parser.parse_args()
     print(ct_logs)
