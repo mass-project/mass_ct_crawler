@@ -329,15 +329,6 @@ def main():
                         help='If crawl once with -o is NOT chosen this sets the time too sleep between crawls.')
 
     args = parser.parse_args()
-    print(ct_logs)
-    print(api_key)
-    print(server_addr)
-    print(args.add_urls)
-    print(download_concurrency)
-    print(mass_concurrency)
-    print(crawl_once)
-    print(time_sleep)
-    print(crawl_depth)
 
     logging.basicConfig(format='[%(levelname)s:%(name)s] %(asctime)s - %(message)s', level=logging.INFO)
 
