@@ -272,17 +272,24 @@ def get_ctl_from_mass(domain):
 def create_ctl_report(anal_system_instance, domain, offset):
     new_time = time.time()
     ctls = Sample.query(domain=domain)
+    while True:
+        try:
+            for ctl in ctls:
+                old_report = ctl.get_reports()[0]
+                old = old_report.json_reports['ctl_report']['offset']
+                old_report.delete()
+                delta = offset - old
+                scheduled = anal_system_instance.schedule_analysis(ctl)
+                scheduled.create_report(
+                    json_report_objects={'ctl_report': ('ctl_report', {'time': new_time, 'initial': False,
+                                                                       'offset': offset, 'delta': delta})})
+                return
+        except requests.HTTPError as e:
+            print("========= EXCEPTION =========")
+            traceback.print_exc()
+            print(e)
+            print("=============================")
 
-    for ctl in ctls:
-        old_report = ctl.get_reports()[0]
-        old = old_report.json_reports['ctl_report']['offset']
-        old_report.delete()
-        delta = offset - old
-        scheduled = anal_system_instance.schedule_analysis(ctl)
-        scheduled.create_report(
-            json_report_objects={'ctl_report': ('ctl_report', {'time': new_time, 'initial': False, 'offset': offset,
-                                                               'delta': delta})})
-        break
 
 
 def main():
