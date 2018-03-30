@@ -47,7 +47,7 @@ def mass(queue):
             break
         for i in range(3):
             try:
-                s = Sample.create(domain=entry['all_domains'][0], tags=['domain_with_cert', entry['log_url'], entry['wildcard']])
+                s = Sample.create(domain=entry['all_domains'][0], tags=['domain_with_certificate', entry['log_url'], entry['wildcard']])
                 scheduled = anal_system_instance.schedule_analysis(s)
                 scheduled.create_report(
                     json_report_objects={'domain_report': ('domain_report', entry)},
@@ -226,7 +226,7 @@ def process_worker(arg):
             if cert_data['leaf_cert']['all_domains'][0].startswith('*.'):
                 output['wildcard'] = 'wildcard_true'
             else:
-                output['wildcard'] = 'wildcard_false'
+                output['wildcard'] = 'wildcard:false'
 
             parsed_results.append(output)
     except Exception as e:
@@ -306,7 +306,6 @@ def main():
     add_urls = os.environ.get('ADD_URLS', config.get('General', 'add CT Log'))
     crawl_depth = os.environ.get('CRAWL_DEPTH', config.get('General', 'first crawl depth'))
     mass_timeout = int(os.environ.get('MASS_TIMEOUT', '60'))
-
 
 
     loop = asyncio.get_event_loop()
