@@ -273,7 +273,7 @@ def get_ctl_from_mass(domain):
                 offset = report.json_reports['ctl_report']['offset']
                 return {'initial': initial, 'offset': offset}
             return None
-        except requests.HTTPError as e:
+        except (requests.HTTPError, requests.ReadTimeout) as e:
             print("========= EXCEPTION =========")
             traceback.print_exc()
             print(e)
