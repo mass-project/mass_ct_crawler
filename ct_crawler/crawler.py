@@ -149,7 +149,7 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                 logging.info('Parsing complete. MASS Queue: {}'.format(parse_results_queue.qsize()))
                 await mass_task
 
-                create_ctl_report(log['url'], log_info['tree_size'])
+                create_ctl_report(log['url'], log_info['tree_size'], anal_system_instance)
 
             if once == 0:
                 after = time.time()
@@ -279,7 +279,7 @@ def get_ctl_from_mass(domain):
             print("=============================")
 
 
-def create_ctl_report(domain, offset):
+def create_ctl_report(domain, offset, anal_system_instance):
     new_time = time.time()
     ctls = Sample.query(domain=domain)
     while True:
