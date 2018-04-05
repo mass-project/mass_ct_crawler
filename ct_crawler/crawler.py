@@ -27,27 +27,28 @@ except locale.Error:
     logging.error('LOCALE FAIL')
     pass
 
+anal_system_instance = None
 DOWNLOAD_QUEUE_SIZE = 40
 MASS_QUEUE_SIZE = 1000
 
 
-"""def sigterm_handler(signal, frame):
+def sigterm_handler(signal, frame):
     anal_system_instance.delete()
     logging.info('exit')
     sys.exit(0)
 
 
-signal.signal(signal.SIGTERM, sigterm_handler)"""
+signal.signal(signal.SIGTERM, sigterm_handler)
 
 
-async def mass_worker(parse_results_queue, mass_concurrency, anal_system_instance):
+async def mass_worker(parse_results_queue, mass_concurrency):
     process_pool = aioprocessing.AioPool()
-    await process_pool.coro_starmap(mass, [(parse_results_queue, anal_system_instance) for _ in range(mass_concurrency)])
+    await process_pool.coro_map(mass, [parse_results_queue for _ in range(mass_concurrency)])
     process_pool.close()
     await process_pool.coro_join()
 
 
-def mass(queue, anal_system_instance):
+def mass(queue):
     while True:
         entry = queue.get()
         if entry is None:
@@ -97,7 +98,7 @@ async def download_worker(session, log_info, work_deque, download_queue, report)
                                    }, report))
 
 
-async def retrieve_certificates(loop, download_concurrency, mass_concurrency, time_sec, once, ctl, anal_system_instance):
+async def retrieve_certificates(loop, download_concurrency, mass_concurrency, time_sec, once, ctl):
     async with aiohttp.ClientSession(loop=loop, conn_timeout=10) as session:
         while True:
             pre = time.time()
@@ -138,8 +139,7 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                 processing_task = asyncio.ensure_future(processing_coro(download_results_queue, parse_results_queue))
                 asyncio.ensure_future(download_tasks)
 
-                mass_task = asyncio.ensure_future(mass_worker(parse_results_queue,
-                                                              mass_concurrency, anal_system_instance))
+                mass_task = asyncio.ensure_future(mass_worker(parse_results_queue, mass_concurrency))
 
                 await download_tasks
                 await download_results_queue.put(None)  # Downloads are done, processing can stop
@@ -149,7 +149,7 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                 logging.info('Parsing complete. MASS Queue: {}'.format(parse_results_queue.qsize()))
                 await mass_task
 
-                create_ctl_report(log['url'], log_info['tree_size'], anal_system_instance)
+                create_ctl_report(log['url'], log_info['tree_size'])
 
             if once == 0:
                 after = time.time()
@@ -248,7 +248,7 @@ def process_worker(arg):
     return parsed_results
 
 
-def submit_ctl_to_mass(url, crawl_depth, anal_system_instance):
+def submit_ctl_to_mass(url, crawl_depth):
     for i in range(3):
         try:
             s = Sample.create(domain=url, tags=['ctlog', url])
@@ -279,7 +279,7 @@ def get_ctl_from_mass(domain):
             print("=============================")
 
 
-def create_ctl_report(domain, offset, anal_system_instance):
+def create_ctl_report(domain, offset):
     new_time = time.time()
     ctls = Sample.query(domain=domain)
     while True:
@@ -302,6 +302,7 @@ def create_ctl_report(domain, offset, anal_system_instance):
 
 
 def main():
+    global anal_system_instance
     config = configparser.ConfigParser()
     config.read('config.ini')
 
@@ -349,15 +350,14 @@ def main():
     try:
         if args.add_urls == 1:
             logging.info('Adding new CTL to MASS...')
-            submit_ctl_to_mass(ct_logs, crawl_depth, anal_system_instance)
+            submit_ctl_to_mass(ct_logs, crawl_depth)
 
         loop.run_until_complete(
             retrieve_certificates(loop, download_concurrency=args.download_concurrency,
                                   mass_concurrency=args.mass_concurrency,
                                   time_sec=args.time_sleep,
                                   once=args.crawl_once,
-                                  ctl=ct_logs,
-                                  anal_system_instance=anal_system_instance))
+                                  ctl=ct_logs))
     finally:
         anal_system_instance.delete()
         logging.info('exit')
