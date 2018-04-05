@@ -30,26 +30,24 @@ except locale.Error:
 DOWNLOAD_QUEUE_SIZE = 40
 MASS_QUEUE_SIZE = 1000
 
-anal_system_instance = None
 
-
-def sigterm_handler(signal, frame):
+"""def sigterm_handler(signal, frame):
     anal_system_instance.delete()
     logging.info('exit')
     sys.exit(0)
 
 
-signal.signal(signal.SIGTERM, sigterm_handler)
+signal.signal(signal.SIGTERM, sigterm_handler)"""
 
 
-async def mass_worker(parse_results_queue, mass_concurrency):
+async def mass_worker(parse_results_queue, mass_concurrency, anal_system_instance):
     process_pool = aioprocessing.AioPool()
-    await process_pool.coro_map(mass, [parse_results_queue for _ in range(mass_concurrency)])
+    await process_pool.coro_starmap(mass, [(parse_results_queue, anal_system_instance) for _ in range(mass_concurrency)])
     process_pool.close()
     await process_pool.coro_join()
 
 
-def mass(queue):
+def mass(queue, anal_system_instance):
     while True:
         entry = queue.get()
         if entry is None:
@@ -63,9 +61,10 @@ def mass(queue):
                     json_report_objects={'domain_report': ('domain_report', entry)},
                 )
                 break
-            except requests.HTTPError:
+            except requests.HTTPError as e:
                 if i == 2:
                     logging.error('HTTPError while creating a sample.')
+                    logging.error(e)
 
 
 async def download_worker(session, log_info, work_deque, download_queue, report):
@@ -98,7 +97,7 @@ async def download_worker(session, log_info, work_deque, download_queue, report)
                                    }, report))
 
 
-async def retrieve_certificates(loop, download_concurrency, mass_concurrency, time_sec, once, ctl):
+async def retrieve_certificates(loop, download_concurrency, mass_concurrency, time_sec, once, ctl, anal_system_instance):
     async with aiohttp.ClientSession(loop=loop, conn_timeout=10) as session:
         while True:
             pre = time.time()
@@ -140,7 +139,7 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                 asyncio.ensure_future(download_tasks)
 
                 mass_task = asyncio.ensure_future(mass_worker(parse_results_queue,
-                                                              mass_concurrency))
+                                                              mass_concurrency, anal_system_instance))
 
                 await download_tasks
                 await download_results_queue.put(None)  # Downloads are done, processing can stop
@@ -249,7 +248,7 @@ def process_worker(arg):
     return parsed_results
 
 
-def submit_ctl_to_mass(url, crawl_depth):
+def submit_ctl_to_mass(url, crawl_depth, anal_system_instance):
     for i in range(3):
         try:
             s = Sample.create(domain=url, tags=['ctlog', url])
@@ -303,26 +302,25 @@ def create_ctl_report(domain, offset):
 
 
 def main():
-    global anal_system_instance
     config = configparser.ConfigParser()
     config.read('config.ini')
 
     api_key = os.getenv('MASS_API_KEY', config.get('General', 'MASS api key'))
     server_addr = os.environ.get('MASS_SERVER', config.get('General', 'MASS server address'))
     ct_logs = os.environ.get('CT_LOGS', config.get('General', 'CT Logs'))
-    mass_concurrency = os.environ.get('MASS_CONCURRENCY', config.get('General', 'MASS concurrency'))
-    download_concurrency = os.environ.get('DOWNLOAD_CONCURRENCY', config.get('General', 'download concurrency'))
-    crawl_once = os.environ.get('CRAWL_ONCE', config.get('General', 'crawl once'))
-    time_sleep = os.environ.get('TIME_SLEEP', config.get('General', 'time sleep'))
-    add_urls = os.environ.get('ADD_URLS', config.get('General', 'add CT Log'))
-    crawl_depth = os.environ.get('CRAWL_DEPTH', config.get('General', 'first crawl depth'))
+    mass_concurrency = int(os.environ.get('MASS_CONCURRENCY', config.get('General', 'MASS concurrency')))
+    download_concurrency = int(os.environ.get('DOWNLOAD_CONCURRENCY', config.get('General', 'download concurrency')))
+    crawl_once = int(os.environ.get('CRAWL_ONCE', config.get('General', 'crawl once')))
+    time_sleep = int(os.environ.get('TIME_SLEEP', config.get('General', 'time sleep')))
+    add_urls = int(os.environ.get('ADD_URLS', config.get('General', 'add CT Log')))
+    crawl_depth = int(os.environ.get('CRAWL_DEPTH', config.get('General', 'first crawl depth')))
     mass_timeout = int(os.environ.get('MASS_TIMEOUT', '60'))
 
     loop = asyncio.get_event_loop()
 
     parser = argparse.ArgumentParser(description='Pull down certificate transparency list and store it in MASS.')
 
-    parser.add_argument('-u', dest="add_urls", action="store", default=add_urls,
+    parser.add_argument('-u', dest="add_urls", action="store", default=add_urls, type=int,
                         help="Retrieve the CTLs defined in config.ini additionally to CTLs stored in MASS")
 
     parser.add_argument('-c', dest='download_concurrency', action='store', default=download_concurrency, type=int,
@@ -331,11 +329,11 @@ def main():
     parser.add_argument('-m', dest='mass_concurrency', action='store', default=mass_concurrency, type=int,
                         help="The number of concurrent MASS submitter to run at a time")
 
-    parser.add_argument('-o', dest='crawl_once', action='store', default=crawl_once,
+    parser.add_argument('-o', dest='crawl_once', action='store', default=crawl_once, type=int,
                         help='Crawl only once.')
 
     parser.add_argument('-t', dest='time_sleep', action='store', default=time_sleep, type=int,
-                        help='If crawl once with -o is NOT chosen this sets the time too sleep between crawls.')
+                        help='If crawl once with -o is NOT chosen this sets the time to sleep between crawls.')
 
     args = parser.parse_args()
 
@@ -345,19 +343,24 @@ def main():
     mac.ConnectionManager().register_connection('default', api_key, server_addr, timeout=mass_timeout)
 
     anal_system_instance = get_or_create_analysis_system_instance(identifier='crawl',
-                                                                  verbose_name='ct_crawler',
-                                                                  tag_filter_exp='sample-type:domainsample',
-                                                                  )
-    if int(args.add_urls) == 1:
-        logging.info('Adding new CTL to MASS...')
-        submit_ctl_to_mass(ct_logs, int(crawl_depth))
+                                                                      verbose_name='ct_crawler',
+                                                                      tag_filter_exp='sample-type:domainsample',
+                                                                      )
+    try:
+        if args.add_urls == 1:
+            logging.info('Adding new CTL to MASS...')
+            submit_ctl_to_mass(ct_logs, crawl_depth, anal_system_instance)
 
-    loop.run_until_complete(
-        retrieve_certificates(loop, download_concurrency=args.download_concurrency,
-                              mass_concurrency=args.mass_concurrency,
-                              time_sec=int(args.time_sleep),
-                              once=int(args.crawl_once),
-                              ctl=ct_logs))
+        loop.run_until_complete(
+            retrieve_certificates(loop, download_concurrency=args.download_concurrency,
+                                  mass_concurrency=args.mass_concurrency,
+                                  time_sec=args.time_sleep,
+                                  once=args.crawl_once,
+                                  ctl=ct_logs,
+                                  anal_system_instance=anal_system_instance))
+    finally:
+        anal_system_instance.delete()
+        logging.info('exit')
 
 
 if __name__ == "__main__":
