@@ -1,5 +1,7 @@
 import base64
 import math
+import aiohttp
+import logging
 
 import datetime
 import time
@@ -61,7 +63,6 @@ async def retrieve_all_ctls(session=None):
             time.sleep(3)
 
 
-
 def _get_owner(log, owners):
     owner_id = log['operated_by'][0]
     owner = next(x for x in owners if x['id'] == owner_id)
@@ -69,18 +70,26 @@ def _get_owner(log, owners):
 
 
 async def get_max_block_size(log, session):
-    async with session.get(DOWNLOAD.format(log['url'], 0, 10000)) as response:
-        entries = await response.json()
-        return len(entries['entries'])
+    while True:
+        try:
+            async with session.get(DOWNLOAD.format(log['url'], 0, 10000)) as response:
+                entries = await response.json()
+                return len(entries['entries'])
+        except aiohttp.client.ServerDisconnectedError as e:
+            logging.error(e)
 
 
 async def retrieve_log_info(log, session):
-    block_size = await get_max_block_size(log, session)
-    async with session.get(CTL_INFO.format(log['url'])) as response:
-        info = await response.json()
-        info['block_size'] = block_size
-        info.update(log)
-        return info
+    while True:
+        try:
+            block_size = await get_max_block_size(log, session)
+            async with session.get(CTL_INFO.format(log['url'])) as response:
+                info = await response.json()
+                info['block_size'] = block_size
+                info.update(log)
+                return info
+        except aiohttp.client.ServerDisconnectedError as e:
+            logging.error(e)
 
 
 async def populate_work(work_deque, log_info, start=0):
