@@ -55,10 +55,14 @@ def mass(queue):
             break
         for i in range(3):
             try:
+                metadata = {'log_url': entry['log_url'],
+                            'not_before': entry['not_before'],
+                            'not_after': entry['not_after'],
+                            'sct_timestamp': entry['sct_timestamp']}
                 s = Sample.create(domain=entry['all_domains'][0],
                                   tags=['domain_with_certificate', entry['log_url'], entry['wildcard']])
                 scheduled = anal_system_instance.schedule_analysis(s)
-                scheduled.create_report(
+                scheduled.create_report(additional_metadata=metadata,
                     json_report_objects={'domain_report': ('domain_report', entry)},
                 )
                 break
@@ -230,8 +234,8 @@ def process_worker(arg):
 
             output = {'log_url': result_info['log_info']['url'],
                       'all_domains': cert_data['leaf_cert']['all_domains'],
-                      'not_before': str(cert_data['leaf_cert']['not_before']),
-                      'not_after': str(cert_data['leaf_cert']['not_after']),
+                      'not_before': cert_data['leaf_cert']['not_before'],
+                      'not_after': cert_data['leaf_cert']['not_after'],
                       'sct_timestamp': mtl.Timestamp / 1000}
             if cert_data['leaf_cert']['all_domains'][0].startswith('*.'):
                 output['wildcard'] = 'wildcard_true'
