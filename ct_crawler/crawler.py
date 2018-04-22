@@ -129,7 +129,6 @@ async def find_timestamp(loop, ctl, timestamp):
                 break
             if abs(data_mid - timestamp) <= abs(data_best_ind - timestamp):
                 best_ind = mid
-        print(await certlib.get_mean(session, log_info['url'], best_ind, log_info['block_size']))
         return best_ind
 
 
