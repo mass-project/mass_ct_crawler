@@ -1,5 +1,7 @@
 import base64
 import math
+import statistics
+
 import aiohttp
 import logging
 
@@ -92,7 +94,7 @@ async def retrieve_log_info(log, session):
             logging.error(e)
 
 
-async def populate_work(work_deque, log_info, start=0):
+async def populate_work(work_deque, log_info, limit, start=0):
     tree_size = log_info['tree_size']
     block_size = log_info['block_size']
 
@@ -100,16 +102,18 @@ async def populate_work(work_deque, log_info, start=0):
 
     end = start + block_size
 
-    if end > tree_size:
-        end = tree_size
+    """if end > tree_size:
+        end = tree_size"""
 
-    chunks = math.ceil((total_size - start) / block_size)
+    chunks = min(math.ceil((total_size - start) / block_size), math.ceil((limit - start) / block_size))
 
     if chunks == 0:
         raise Exception("No work needed!")
 
     for _ in range(chunks):
         # Cap the end to the last record in the DB
+        if end >= limit:
+            end = limit
         if end >= tree_size:
             end = tree_size - 1
 
@@ -190,3 +194,24 @@ def dump_extensions(certificate):
             except Exception as e:
                 pass
     return extensions
+
+
+async def get_mean(session, url, block, block_size):
+    while True:
+        try:
+            async with session.get(DOWNLOAD.format(url, block, block + block_size - 1)) as response:
+                entry_list = await response.json()
+                data = []
+                for entry in entry_list['entries']:
+                    mtl = MerkleTreeHeader.parse(base64.b64decode(entry['leaf_input']))
+                    if mtl.LogEntryType == "X509LogEntryType":
+                        chain = [crypto.load_certificate(crypto.FILETYPE_ASN1, Certificate.parse(mtl.Entry).CertData)]
+                    else:
+                        extra_data = PreCertEntry.parse(base64.b64decode(entry['extra_data']))
+                        chain = [crypto.load_certificate(crypto.FILETYPE_ASN1, extra_data.LeafCert.CertData)]
+
+                    data.append(dump_cert(chain[0])['not_before'])
+
+            return statistics.mean(data)
+        except Exception as e:
+            logging.error("Exception getting block {}-{}! {}".format(block, block + block_size - 1, e))
