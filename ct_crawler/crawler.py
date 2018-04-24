@@ -30,6 +30,7 @@ except locale.Error:
 anal_system_instance = None
 DOWNLOAD_QUEUE_SIZE = 40
 MASS_QUEUE_SIZE = 1000
+DOWNLOAD_TRIES = 30
 
 
 def sigterm_handler(signal, frame):
@@ -41,14 +42,14 @@ def sigterm_handler(signal, frame):
 signal.signal(signal.SIGTERM, sigterm_handler)
 
 
-async def mass_worker(parse_results_queue, mass_concurrency):
+async def mass_worker(parse_results_queue, mass_concurrency, interval):
     process_pool = aioprocessing.AioPool()
-    await process_pool.coro_map(mass, [parse_results_queue for _ in range(mass_concurrency)])
+    await process_pool.coro_starmap(mass, [(parse_results_queue, interval) for _ in range(mass_concurrency)])
     process_pool.close()
     await process_pool.coro_join()
 
 
-def mass(queue):
+def mass(queue, interval):
     while True:
         entry = queue.get()
         if entry is None:
@@ -60,7 +61,7 @@ def mass(queue):
                             'not_after': entry['not_after'],
                             'sct_timestamp': entry['sct_timestamp']}
                 s = Sample.create(domain=entry['all_domains'][0],
-                                  tags=['domain_with_certificate', entry['log_url'], entry['wildcard']])
+                                  tags=['domain_with_certificate', entry['log_url'], entry['wildcard'], 'interval', 'interval:{}'.format(interval)])
                 scheduled = anal_system_instance.schedule_analysis(s)
                 scheduled.create_report(additional_metadata=metadata,
                                         json_report_objects={'domain_report': ('domain_report', entry)},
@@ -79,18 +80,16 @@ async def download_worker(session, log_info, work_deque, download_queue, report)
         except IndexError:
             return
 
-        for x in range(5):
+        for x in range(DOWNLOAD_TRIES):
             try:
                 logging.info('Getting block {}-{}'.format(start, end))
                 async with session.get(certlib.DOWNLOAD.format(log_info['url'], start, end)) as response:
                     entry_list = await response.json()
                     break
             except Exception as e:
-                if x == 4:
+                if x == DOWNLOAD_TRIES:
                     logging.error("Exception getting block {}-{}! {}".format(start, end, e))
         else:
-            with open('/tmp/fails.csv', 'a') as f:
-                f.write(",".join([log_info['url'], str(start), str(end)]))
             return
 
         for index, entry in zip(range(start, end + 1), entry_list['entries']):
@@ -103,6 +102,7 @@ async def download_worker(session, log_info, work_deque, download_queue, report)
 
 
 async def find_timestamp(loop, ctl, timestamp):
+    best_data = None
     log_info = None
     chunks = None
     async with aiohttp.ClientSession(loop=loop, conn_timeout=10) as session:
@@ -126,14 +126,17 @@ async def find_timestamp(loop, ctl, timestamp):
                 hi = mid - log_info['block_size']
             else:
                 best_ind = mid
+                best_data = data_mid
                 break
             if abs(data_mid - timestamp) <= abs(data_best_ind - timestamp):
                 best_ind = mid
+                best_data = data_mid
+        logging.info('Searched For Timestamp: {}. Found: {}'.format(timestamp, best_data))
         return best_ind
 
 
 async def retrieve_certificates(loop, download_concurrency, mass_concurrency, time_sec, once, ctl, interval=False,
-                                start=None, end=None):
+                                start=None, end=None, desired_start=None):
     async with aiohttp.ClientSession(loop=loop, conn_timeout=10) as session:
         while True:
             pre = time.time()
@@ -185,7 +188,7 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                 processing_task = asyncio.ensure_future(processing_coro(download_results_queue, parse_results_queue))
                 asyncio.ensure_future(download_tasks)
 
-                mass_task = asyncio.ensure_future(mass_worker(parse_results_queue, mass_concurrency))
+                mass_task = asyncio.ensure_future(mass_worker(parse_results_queue, mass_concurrency, desired_start))
 
                 await download_tasks
                 await download_results_queue.put(None)  # Downloads are done, processing can stop
@@ -195,7 +198,8 @@ async def retrieve_certificates(loop, download_concurrency, mass_concurrency, ti
                 logging.info('Parsing complete. MASS Queue: {}'.format(parse_results_queue.qsize()))
                 await mass_task
 
-                create_ctl_report(log['url'], log_info['tree_size'])
+                if not interval:
+                    create_ctl_report(log['url'], log_info['tree_size'])
 
             if once == 0 and interval is False:
                 after = time.time()
@@ -309,13 +313,17 @@ def submit_ctl_to_mass(url, crawl_depth):
 
 
 def get_ctl_from_mass(domain):
+    initial = None
+    offset = None
     while True:
         try:
             ctls = Sample.query(domain=domain)
             for ctl in ctls:
-                report = ctl.get_reports()[0]
-                initial = report.json_reports['ctl_report']['initial']
-                offset = report.json_reports['ctl_report']['offset']
+                reports = ctl.get_reports()
+                for rep in reports:
+                    initial = rep.json_reports['ctl_report']['initial']
+                    offset = rep.json_reports['ctl_report']['offset']
+                    break
                 return {'initial': initial, 'offset': offset}
             return None
         except (requests.HTTPError, requests.ReadTimeout) as e:
@@ -362,8 +370,9 @@ def main():
     crawl_depth = int(os.environ.get('CRAWL_DEPTH', config.get('General', 'first crawl depth')))
     mass_timeout = int(os.environ.get('MASS_TIMEOUT', '60'))
     interval = int(os.getenv('MASS_INTERVAL', config.get('General', 'Interval')))
+    fix_interval = int(os.getenv('MASS_FIX_INTERVAL', config.get('General', 'Fix Interval')))
     timestamp_start = int(os.getenv('MASS_START', config.get('General', 'timestamp start')))
-    timestamp_end = int(os.getenv('MASS_START', config.get('General', 'timestamp end')))
+    timestamp_end = int(os.getenv('MASS_END', config.get('General', 'timestamp end')))
 
     loop = asyncio.get_event_loop()
 
@@ -387,6 +396,9 @@ def main():
     parser.add_argument('-i', dest='interval', action='store', default=interval, type=int,
                         help='If crawl once with -o is NOT chosen this sets the time to sleep between crawls.')
 
+    parser.add_argument('-fi', dest='fix_interval', action='store', default=fix_interval, type=int,
+                        help='If crawl once with -o is NOT chosen this sets the time to sleep between crawls.')
+
     args = parser.parse_args()
 
     logging.basicConfig(format='[%(levelname)s:%(name)s] %(asctime)s - %(message)s', level=logging.INFO)
@@ -398,6 +410,9 @@ def main():
                                                                   verbose_name='ct_crawler',
                                                                   tag_filter_exp='sample-type:domainsample',
                                                                   )
+    if args.interval and args.fix_interval:
+        logging.error('interval and fix interval is not allowed.')
+        return
     try:
         if args.add_urls == 1:
             logging.info('Adding new CTL to MASS...')
@@ -419,6 +434,21 @@ def main():
                                       interval=True,
                                       start=start,
                                       end=end))
+        elif fix_interval:
+            logging.info('Searching for Fix-Interval...')
+            start = loop.run_until_complete(find_timestamp(loop, ctl=ct_logs, timestamp=timestamp_start))
+
+            logging.info("start found: {} fi".format(start))
+            loop.run_until_complete(
+                retrieve_certificates(loop, download_concurrency=args.download_concurrency,
+                                      mass_concurrency=args.mass_concurrency,
+                                      time_sec=args.time_sleep,
+                                      once=args.crawl_once,
+                                      ctl=ct_logs,
+                                      interval=True,
+                                      start=start,
+                                      end=start + fix_interval,
+                                      desired_start=timestamp_start))
 
         else:
             loop.run_until_complete(
