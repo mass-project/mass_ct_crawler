@@ -30,7 +30,6 @@ except locale.Error:
 anal_system_instance = None
 DOWNLOAD_QUEUE_SIZE = 40
 MASS_QUEUE_SIZE = 1000
-DOWNLOAD_TRIES = 30
 
 
 def sigterm_handler(signal, frame):
@@ -80,16 +79,20 @@ async def download_worker(session, log_info, work_deque, download_queue, report)
         except IndexError:
             return
 
-        for x in range(DOWNLOAD_TRIES):
+        for x in range(50):
             try:
                 logging.info('Getting block {}-{}'.format(start, end))
                 async with session.get(certlib.DOWNLOAD.format(log_info['url'], start, end)) as response:
                     entry_list = await response.json()
                     break
             except Exception as e:
-                if x == DOWNLOAD_TRIES:
-                    logging.error("Exception getting block {}-{}! {}".format(start, end, e))
+                logging.error("Can't get Block: {}-{}!".format(start, end))
+                asyncio.sleep(10)
+                if x == 10:
+                    logging.error("Exception getting block {}-{}! Skipping... {}".format(start, end, e))
         else:
+            with open('/tmp/fails.csv', 'a') as f:
+                f.write(",".join([log_info['url'], str(start), str(end)]))
             return
 
         for index, entry in zip(range(start, end + 1), entry_list['entries']):
