@@ -1,0 +1,20 @@
+version: "3"
+services:
+  service_crawler:
+    image: crawler:latest
+    network_mode: "host"
+    environment:
+      - MASS_SERVER=http://xxx/api/
+      - MASS_API_KEY=xxx
+      - CT_LOGS=mammoth.ct.comodo.com
+      - MASS_CONCURRENCY=8
+      - DOWNLOAD_CONCURRENCY=1
+      - CRAWL_ONCE=0
+      - TIME_SLEEP=1
+      - ADD_URLS=0
+      - CRAWL_DEPTH=2100
+      - MASS_TIMEOUT=60
+      - MASS_INTERVAL=0
+      - MASS_FIX_INTERVAL=500
+      - MASS_START=1512086400
+      - MASS_END=1507443200
