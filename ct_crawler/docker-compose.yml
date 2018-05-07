@@ -1,4 +1,4 @@
-version: "3"
+version: "2"
 services:
   service_crawler:
     image: crawler:latest
