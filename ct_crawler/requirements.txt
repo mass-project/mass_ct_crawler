@@ -3,3 +3,5 @@ aiohttp
 aioprocessing
 construct
 git+https://github.com/mass-project/mass_api_client.git@0.3
+git+https://github.com/Silberschleier/stomp.py
+zmq==0.0.0

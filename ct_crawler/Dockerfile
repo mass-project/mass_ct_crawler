@@ -11,7 +11,8 @@ RUN apk add --no-cache \
 	python3
 
 COPY requirements.txt /
+RUN pip3 install websocket-client
 RUN pip3 install -r /requirements.txt
 
 ADD . /
-ENTRYPOINT ["python3", "crawler.py"]
+ENTRYPOINT ["python3", "crawler.py", "-u"]

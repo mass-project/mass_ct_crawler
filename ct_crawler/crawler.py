@@ -10,7 +10,7 @@ from collections import deque
 
 import aiohttp
 import aioprocessing
-# import certlib
+import certlib
 import mass_api_client as mac
 import requests
 from OpenSSL import crypto
@@ -19,7 +19,7 @@ from mass_api_client.utils import get_or_create_analysis_system
 from mass_api_client.utils.multistaged_analysis import AnalysisFrame, CreateSampleAndReportObject
 from mass_api_client.utils.multistaged_analysis.miscellaneous import create_sample_and_report
 
-from ct_crawler import certlib
+#from ct_crawler import certlib
 
 try:
     locale.setlocale(locale.LC_ALL, 'en_US.utf8')
