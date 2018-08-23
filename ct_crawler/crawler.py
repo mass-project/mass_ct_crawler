@@ -19,7 +19,7 @@ from mass_api_client.utils import get_or_create_analysis_system
 from mass_api_client.utils.multistaged_analysis import AnalysisFrame, CreateSampleAndReportObject
 from mass_api_client.utils.multistaged_analysis.miscellaneous import create_sample_and_report
 
-#from ct_crawler import certlib
+# from ct_crawler import certlib
 
 try:
     locale.setlocale(locale.LC_ALL, 'en_US.utf8')
@@ -161,8 +161,9 @@ async def retrieve_certificates(loop, sockets, download_concurrency, ctl,
                     time.sleep(new)
             else:
                 CreateSampleAndReportObject()
-            logging.info('Completed.')
-            break
+            if once == 1:
+                logging.info('Completed.')
+                break
 
 
 async def processing_coro(download_results_queue, interval, sockets):
