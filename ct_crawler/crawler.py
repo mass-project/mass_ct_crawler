@@ -17,7 +17,7 @@ from OpenSSL import crypto
 from mass_api_client.resources import *
 from mass_api_client.utils import get_or_create_analysis_system
 from mass_api_client.utils.multistaged_analysis import AnalysisFrame, CreateSampleAndReportObject
-from mass_api_client.utils.multistaged_analysis.miscellaneous import create_sample_and_report
+from mass_api_client.utils.multistaged_analysis.miscellaneous import create_sample
 
 # from ct_crawler import certlib
 
@@ -160,8 +160,6 @@ async def retrieve_certificates(loop, sockets, download_concurrency, ctl,
                 if new > 0:
                     time.sleep(new)
             else:
-                CreateSampleAndReportObject()
-            if once == 1:
                 logging.info('Completed.')
                 break
 
@@ -266,11 +264,10 @@ def process_worker(arg):
     return parsed_results
 
 
-def submit_ctl_to_mass(sockets, url, crawl_depth):
-    data = CreateSampleAndReportObject(sample_domain=url, sample_tags=['ctlog', url],
-                                       report_json_report_objects={
-                                           'ctl_report': {'initial': True, 'offset': crawl_depth}})
-    sockets.send(data)
+def submit_ctl_to_mass(url, crawl_depth):
+    s = Sample.create(domain=url, tags=['ctlog', url], use_queue=False)
+    Report.create_without_request(s, analysis_system, json_report_objects={
+                                           'ctl_report': {'initial': True, 'offset': crawl_depth}}, use_queue=False)
 
 
 def get_ctl_from_mass(domain):
@@ -306,7 +303,7 @@ def create_ctl_report(domain, offset, analysis_system):
                     delta = offset - old
                     Report.create_without_request(ctl, analysis_system, json_report_objects={
                         'ctl_report': {'time': new_time, 'initial': False,
-                                       'offset': offset, 'delta': delta}})
+                                       'offset': offset, 'delta': delta}}, use_queue=False)
                     break
                 return
         except requests.HTTPError as e:
@@ -362,7 +359,7 @@ def crawler(sockets):
         logging.info('Start crawling...')
         if add_urls == 1:
             logging.info('Adding new CTL to MASS...')
-            submit_ctl_to_mass(sockets, ct_logs, crawl_depth)
+            submit_ctl_to_mass(ct_logs, crawl_depth)
         loop.run_until_complete(
             retrieve_certificates(loop, sockets, download_concurrency=download_concurrency,
                                   time_sec=time_sleep,
@@ -394,6 +391,6 @@ if __name__ == "__main__":
                                                     )
     frame = AnalysisFrame()
     frame.add_stage(crawler, 'crawler', next_stage='create_sample_and_report')
-    frame.add_stage(create_sample_and_report, 'create_sample_and_report', args=(analysis_system,))
+    frame.add_stage(create_sample, 'create_sample_and_report', args=(analysis_system,))
 
     frame.start_all_stages()
