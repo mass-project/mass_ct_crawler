@@ -2,7 +2,7 @@ pyopenssl
 aiohttp
 aioprocessing
 construct
-git+https://github.com/mass-project/mass_api_client.git@0.3_queue-fix
+git+https://github.com/mass-project/mass_api_client.git@0.3_process-fix
 git+https://github.com/Silberschleier/stomp.py
 zmq==0.0.0
 raven==6.9.0
