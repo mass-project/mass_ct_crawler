@@ -39,6 +39,7 @@ signal.signal(signal.SIGTERM, sigterm_handler)
 
 
 async def mass_worker(parse_results_queue, mass_concurrency, interval):
+    return
     logging.info("Starting worker...")
     process_pool = aioprocessing.AioPool(mass_concurrency)
     await process_pool.coro_starmap(mass, [(parse_results_queue, interval)])
@@ -207,9 +208,13 @@ async def processing_coro(download_results_queue, parse_result_queue):
             results = await process_pool.coro_map(process_worker, entries_iter)
             for result in results:
                 if len(result) > 0:
-                    logging.info('Adding {} Samples to MASS Queue...'.format(len(result)))
-                    for res in result:
-                        parse_result_queue.put(res)
+                    logging.info('[{}] Adding {} Samples to file...'.format(os.getpid(), len(result)))
+                    with open('results.txt', 'a') as fp:
+                        for res in result:
+                            for domain in res['all_domains']:
+                                fp.write(domain)
+                                fp.write('\n')
+                        print("[{}] Writing to file finished.".format(os.getpid()))
 
         if done:
             break
@@ -277,7 +282,7 @@ def main():
     config = configparser.ConfigParser()
     config.read('config.ini')
     ct_logs = os.environ.get('CT_LOGS', config.get('General', 'CT Logs'))
-    download_concurrency = int(os.environ.get('DOWNLOAD_CONCURRENCY', config.get('General', 'download concurrency')))
+    download_concurrency = 1
     time_sleep = int(os.environ.get('TIME_SLEEP', config.get('General', 'time sleep')))
     add_urls = int(os.environ.get('ADD_URLS', config.get('General', 'add CT Log')))
     fix_interval = int(os.getenv('MASS_FIX_INTERVAL', config.get('General', 'Fix Interval')))
